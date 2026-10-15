@@ -1,518 +1,154 @@
-{% load static %}
+{% extends "portal/base.html" %}
 
-<!DOCTYPE html>
-<html lang="en">
+{% block title %}Job Demand Records{% endblock %}
+{% block page_title %}💼 Job Demand Records{% endblock %}
+{% block page_subtitle %}Complete list of all job demand entries with career progression details · <span id="liveTime" class="text-blue-600 font-semibold"></span>{% endblock %}
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Demand Records - Skill Demand Portal</title>
+{% block header_actions %}
+    <a href="{% url 'survey:admin_export_full_csv' %}" class="btn-modern btn-success-modern">
+        <i class="fas fa-file-export"></i> Export CSV
+    </a>
+    <button type="button" class="btn-modern btn-primary-modern" onclick="window.print()">
+        <i class="fas fa-print"></i> Print
+    </button>
+    <button type="button" class="btn-modern btn-outline-modern" onclick="window.location.reload()">
+        <i class="fas fa-sync-alt"></i>
+    </button>
+{% endblock %}
 
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Font Awesome Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-    
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+{% block extra_head %}
+<style>
+    .demand-badge {
+        display: inline-block;
+        padding: 4px 14px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 700;
+    }
+    .demand-badge.current { background: #dbeafe; color: #2563eb; }
+    .demand-badge.future { background: #dcfce7; color: #059669; }
+    .salary-range { font-weight: 600; color: #7c3aed; }
+</style>
+{% endblock %}
 
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+{% block content %}
 
-        body {
-            font-family: 'Inter', sans-serif;
-            background: #f0f4f8;
-            color: #0a1628;
-        }
-
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: #e2e8f0; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb { background: linear-gradient(135deg, #2563eb, #7c3aed); border-radius: 10px; }
-
-        .sidebar-modern {
-            width: 280px;
-            min-height: 100vh;
-            background: linear-gradient(180deg, #0a1628, #1a2a4a);
-            backdrop-filter: blur(20px);
-            border-right: 1px solid rgba(255, 255, 255, 0.05);
-            position: sticky;
-            top: 0;
-            transition: all 0.3s ease;
-            z-index: 50;
-        }
-
-        .sidebar-brand-modern {
-            padding: 28px 24px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-            cursor: pointer;
-        }
-        .sidebar-brand-modern:hover { opacity: 0.9; }
-
-        .brand-logo-modern {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .logo-circle {
-            width: 52px;
-            height: 52px;
-            background: linear-gradient(135deg, #2563eb, #7c3aed);
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 8px;
-            box-shadow: 0 8px 24px rgba(37, 99, 235, 0.3);
-        }
-
-        .logo-circle img {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            filter: brightness(0) invert(1);
-        }
-
-        .brand-text-modern h2 { font-size: 20px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
-        .brand-text-modern p { font-size: 12px; color: #94a3b8; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase; margin-top: 2px; }
-
-        .nav-modern { padding: 20px 16px; display: flex; flex-direction: column; gap: 4px; }
-        .nav-label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; padding: 12px 12px 8px; }
-
-        .nav-link-modern {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            padding: 12px 16px;
-            border-radius: 12px;
-            color: #94a3b8;
-            text-decoration: none;
-            font-size: 14px;
-            font-weight: 500;
-            transition: all 0.25s ease;
-            position: relative;
-        }
-        .nav-link-modern:hover { background: rgba(255, 255, 255, 0.06); color: #ffffff; transform: translateX(4px); }
-        .nav-link-modern.active {
-            background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(124, 58, 237, 0.2));
-            color: #ffffff;
-            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.2);
-        }
-        .nav-link-modern.active::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 3px;
-            height: 24px;
-            background: linear-gradient(180deg, #2563eb, #7c3aed);
-            border-radius: 0 4px 4px 0;
-        }
-
-        .nav-icon-modern {
-            width: 36px;
-            height: 36px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            flex-shrink: 0;
-            transition: all 0.3s ease;
-        }
-        .nav-link-modern.active .nav-icon-modern { background: linear-gradient(135deg, #2563eb, #7c3aed); color: #ffffff; }
-
-        .nav-badge {
-            margin-left: auto;
-            background: linear-gradient(135deg, #2563eb, #7c3aed);
-            color: #ffffff;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 2px 10px;
-            border-radius: 20px;
-        }
-
-        .sidebar-footer-modern {
-            margin-top: auto;
-            padding: 20px 24px;
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
-        }
-        .sidebar-footer-modern p { font-size: 12px; color: #64748b; }
-        .sidebar-footer-modern strong { display: block; font-size: 14px; color: #ffffff; margin-top: 4px; font-weight: 700; }
-
-        .main-content-modern { flex: 1; padding: 32px; min-height: 100vh; background: #f0f4f8; }
-
-        .header-modern {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 20px;
-            margin-bottom: 32px;
-            flex-wrap: wrap;
-        }
-        .header-title h1 { font-size: 28px; font-weight: 800; color: #0a1628; letter-spacing: -0.5px; }
-        .header-title p { font-size: 15px; color: #64748b; font-weight: 400; margin-top: 4px; }
-
-        .header-actions-modern { display: flex; align-items: center; gap: 12px; }
-
-        .btn-modern {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px 20px;
-            border-radius: 12px;
-            font-weight: 600;
-            font-size: 14px;
-            transition: all 0.3s ease;
-            border: none;
-            cursor: pointer;
-            text-decoration: none;
-            font-family: 'Inter', sans-serif;
-        }
-        .btn-success-modern { background: linear-gradient(135deg, #059669, #10b981); color: #ffffff; box-shadow: 0 4px 16px rgba(5, 150, 105, 0.25); }
-        .btn-success-modern:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(5, 150, 105, 0.35); }
-        .btn-primary-modern { background: linear-gradient(135deg, #2563eb, #7c3aed); color: #ffffff; box-shadow: 0 4px 16px rgba(37, 99, 235, 0.25); }
-        .btn-primary-modern:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(37, 99, 235, 0.35); }
-        .btn-outline-modern { background: transparent; color: #0a1628; border: 2px solid #e2e8f0; }
-        .btn-outline-modern:hover { background: #f8fafc; border-color: #94a3b8; transform: translateY(-2px); }
-
-        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 32px; }
-
-        .stat-card {
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 20px 24px;
-            border: 1px solid rgba(226, 232, 240, 0.6);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            transition: all 0.3s ease;
-        }
-        .stat-card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08); }
-
-        .stat-icon {
-            width: 48px;
-            height: 48px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            flex-shrink: 0;
-        }
-        .stat-icon.blue { background: linear-gradient(135deg, #dbeafe, #bfdbfe); color: #2563eb; }
-        .stat-icon.green { background: linear-gradient(135deg, #d1fae5, #a7f3d0); color: #059669; }
-        .stat-icon.orange { background: linear-gradient(135deg, #fef3c7, #fde68a); color: #d97706; }
-        .stat-icon.purple { background: linear-gradient(135deg, #ede9fe, #c4b5fd); color: #7c3aed; }
-
-        .stat-info p { font-size: 13px; color: #64748b; font-weight: 500; }
-        .stat-info h3 { font-size: 24px; font-weight: 800; color: #0a1628; letter-spacing: -0.5px; }
-
-        .table-container {
-            background: #ffffff;
-            border-radius: 20px;
-            border: 1px solid rgba(226, 232, 240, 0.6);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
-            overflow: hidden;
-        }
-
-        .table-header {
-            padding: 20px 24px;
-            border-bottom: 1px solid #f1f5f9;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 12px;
-        }
-        .table-header h3 { font-size: 16px; font-weight: 700; color: #0a1628; }
-
-        .table-search input {
-            padding: 8px 16px;
-            border: 2px solid #e2e8f0;
-            border-radius: 10px;
-            font-size: 14px;
-            font-family: 'Inter', sans-serif;
-            transition: all 0.3s ease;
-            outline: none;
-            width: 200px;
-        }
-        .table-search input:focus { border-color: #2563eb; box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1); }
-
-        .table-wrapper { overflow-x: auto; padding: 0 4px; }
-        table { width: 100%; border-collapse: collapse; }
-        thead { background: #f8fafc; }
-        th { padding: 14px 20px; text-align: left; font-size: 12px; font-weight: 600; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; border-bottom: 2px solid #e2e8f0; white-space: nowrap; }
-        td { padding: 14px 20px; border-bottom: 1px solid #f1f5f9; font-size: 14px; color: #0a1628; }
-        tr:hover td { background: #f8fafc; }
-
-        .demand-badge {
-            display: inline-block;
-            padding: 4px 14px;
-            border-radius: 20px;
-            font-size: 13px;
-            font-weight: 700;
-        }
-        .demand-badge.current { background: #dbeafe; color: #2563eb; }
-        .demand-badge.future { background: #dcfce7; color: #059669; }
-
-        .salary-range { font-weight: 600; color: #7c3aed; }
-
-        .empty-state { text-align: center; padding: 60px 20px; }
-        .empty-state i { font-size: 56px; color: #cbd5e1; margin-bottom: 16px; }
-        .empty-state h4 { font-size: 20px; font-weight: 700; color: #0a1628; margin-bottom: 8px; }
-        .empty-state p { color: #94a3b8; font-size: 15px; }
-
-        @media (max-width: 768px) {
-            .sidebar-modern {
-                width: 100%;
-                min-height: auto;
-                position: fixed;
-                bottom: 0;
-                left: 0;
-                top: auto;
-                height: auto;
-                border-right: none;
-                border-top: 1px solid rgba(255, 255, 255, 0.1);
-                background: rgba(10, 22, 40, 0.95);
-                z-index: 100;
-            }
-            .sidebar-brand-modern { display: none; }
-            .nav-modern { flex-direction: row; overflow-x: auto; padding: 8px 12px; gap: 4px; }
-            .nav-label { display: none; }
-            .nav-link-modern { padding: 10px 14px; font-size: 12px; white-space: nowrap; flex-direction: column; gap: 4px; }
-            .nav-link-modern span:not(.nav-icon-modern) { font-size: 10px; }
-            .nav-icon-modern { width: 32px; height: 32px; font-size: 14px; }
-            .nav-badge { display: none; }
-            .sidebar-footer-modern { display: none; }
-            .main-content-modern { padding: 16px; padding-bottom: 100px; }
-            .header-modern { flex-direction: column; align-items: flex-start; }
-            .header-title h1 { font-size: 22px; }
-            .header-actions-modern { width: 100%; flex-wrap: wrap; }
-            .header-actions-modern .btn-modern { flex: 1; justify-content: center; font-size: 12px; padding: 8px 12px; }
-            .stats-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
-            .stat-card { padding: 16px; }
-            .stat-info h3 { font-size: 20px; }
-            .table-header { flex-direction: column; align-items: stretch; }
-            .table-search input { width: 100%; }
-            th, td { padding: 10px 14px; font-size: 12px; }
-        }
-
-        @media (max-width: 480px) { .stats-grid { grid-template-columns: 1fr; } }
-
-        @media print {
-            .sidebar-modern, .header-actions-modern, .stats-grid { display: none; }
-            .main-content-modern { padding: 0; }
-            .table-container { box-shadow: none !important; border: 1px solid #e2e8f0 !important; }
-            body { background: #ffffff !important; }
-        }
-    </style>
-</head>
-
-<body>
-
-<div class="flex min-h-screen">
-
-    <!-- Sidebar -->
-    <aside class="sidebar-modern">
-        <a href="{% url 'survey:admin_dashboard' %}" class="sidebar-brand-modern">
-            <div class="brand-logo-modern">
-                <div class="logo-circle">
-                    <img src="{% static 'img/rsldc-logo.png' %}" alt="RSLDC">
-                </div>
-                <div class="brand-text-modern">
-                    <h2>Skill Demand</h2>
-                    <p>MIS Portal 2026</p>
-                </div>
-            </div>
-        </a>
-
-        <nav class="nav-modern">
-            <div class="nav-label">Main</div>
-            <a href="{% url 'survey:admin_dashboard' %}" class="nav-link-modern">
-                <span class="nav-icon-modern"><i class="fas fa-chart-pie"></i></span>
-                <span>Dashboard</span>
-            </a>
-            <a href="{% url 'survey:admin_surveys' %}" class="nav-link-modern">
-                <span class="nav-icon-modern"><i class="fas fa-file-alt"></i></span>
-                <span>Survey Records</span>
-            </a>
-            <a href="{% url 'survey:admin_job_demands' %}" class="nav-link-modern active">
-                <span class="nav-icon-modern"><i class="fas fa-briefcase"></i></span>
-                <span>Job Demands</span>
-                <span class="nav-badge">{{ job_demands|length }}</span>
-            </a>
-            <a href="{% url 'survey:admin_govt_list' %}" class="nav-link-modern">
-                <span class="nav-icon-modern"><i class="fas fa-landmark"></i></span>
-                <span>Govt Departments</span>
-            </a>
-            <div class="nav-label" style="margin-top:12px;">Tools</div>
-            <a href="#" class="nav-link-modern">
-                <span class="nav-icon-modern"><i class="fas fa-download"></i></span>
-                <span>Export CSV</span>
-            </a>
-            <a href="{% url 'survey:admin_logout' %}" class="nav-link-modern" style="margin-top:8px; border-top:1px solid rgba(255,255,255,0.05); padding-top:16px;">
-                <span class="nav-icon-modern"><i class="fas fa-sign-out-alt"></i></span>
-                <span>Logout</span>
-            </a>
-        </nav>
-
-        <div class="sidebar-footer-modern">
-            <p>Rajasthan Skill Demand</p>
-            <strong>Aggregation Portal v2.0</strong>
+<!-- Stats Cards -->
+<section class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon blue"><i class="fas fa-briefcase"></i></div>
+        <div class="stat-info">
+            <p>Total Job Roles</p>
+            <h3>{{ job_demands|length }}</h3>
         </div>
-    </aside>
-
-    <!-- Main Content -->
-    <main class="main-content-modern">
-
-        <!-- Top Header -->
-        <header class="header-modern">
-            <div class="header-title">
-                <h1>💼 Job Demand Records</h1>
-                <p>Complete list of all job demand entries with career progression details</p>
-            </div>
-            <div class="header-actions-modern">
-                <a href="#" class="btn-modern btn-success-modern">
-                    <i class="fas fa-file-export"></i> Export CSV
-                </a>
-                <button type="button" class="btn-modern btn-primary-modern" onclick="window.print()">
-                    <i class="fas fa-print"></i> Print
-                </button>
-                <button type="button" class="btn-modern btn-outline-modern" onclick="window.location.reload()">
-                    <i class="fas fa-sync-alt"></i>
-                </button>
-            </div>
-        </header>
-
-        <!-- Stats Cards -->
-        <section class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-icon blue"><i class="fas fa-briefcase"></i></div>
-                <div class="stat-info">
-                    <p>Total Job Roles</p>
-                    <h3>{{ job_demands|length }}</h3>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon green"><i class="fas fa-users"></i></div>
-                <div class="stat-info">
-                    <p>Total Current Openings</p>
-                    <h3>{{ total_current|default:0 }}</h3>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon orange"><i class="fas fa-rocket"></i></div>
-                <div class="stat-info">
-                    <p>Total Future Demand</p>
-                    <h3>{{ total_future|default:0 }}</h3>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon purple"><i class="fas fa-building"></i></div>
-                <div class="stat-info">
-                    <p>Unique Employers</p>
-                    <h3>{{ job_demands|dictsort:"survey_id"|length }}</h3>
-                </div>
-            </div>
-        </section>
-
-        <!-- Table -->
-        <div class="table-container">
-            <div class="table-header">
-                <h3><i class="fas fa-list-ul mr-2 text-indigo-600"></i> All Job Demand Records</h3>
-                <div class="table-search">
-                    <input type="text" id="searchInput" placeholder="🔍 Search jobs..." onkeyup="filterTable()">
-                    <span class="text-sm text-slate-400" id="recordCount">{{ job_demands|length }} records</span>
-                </div>
-            </div>
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th># ID</th>
-                            <th>Employer</th>
-                            <th>Job Role</th>
-                            <th>Sector</th>
-                            <th>Qualification</th>
-                            <th>Experience</th>
-                            <th>Current</th>
-                            <th>6 Months</th>
-                            <th>12 Months</th>
-                            <th>Salary</th>
-                            <th>Career Prog.</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tableBody">
-                        {% for job in job_demands %}
-                        <tr>
-                            <td><span class="font-bold text-indigo-600">#{{ job.id }}</span></td>
-                            <td>
-                                <div class="font-semibold text-sm">{{ job.survey.company_name }}</div>
-                                <div class="text-xs text-slate-500">{{ job.survey.company_code }}</div>
-                            </td>
-                            <td><span class="font-semibold text-blue-700">{{ job.job_role }}</span></td>
-                            <td>
-                                <span class="bg-purple-50 text-purple-700 px-3 py-1 rounded-full text-xs font-semibold">
-                                    {{ job.sector }}
-                                </span>
-                            </td>
-                            <td>
-                                <span class="bg-amber-50 text-amber-700 px-3 py-1 rounded-full text-xs font-semibold">
-                                    {{ job.qualification }}
-                                </span>
-                            </td>
-                            <td>{{ job.experience }}</td>
-                            <td><span class="demand-badge current">{{ job.current_openings }}</span></td>
-                            <td><span class="demand-badge future">{{ job.openings_6_months }}</span></td>
-                            <td><span class="demand-badge future">{{ job.openings_12_months }}</span></td>
-                            <td><span class="salary-range">₹{{ job.salary_offered }}</span></td>
-                            <td>
-                                {% if job.career_progression == 'Yes' %}
-                                    <span class="bg-green-50 text-green-700 px-2 py-1 rounded-full text-xs font-semibold">
-                                        Yes
-                                    </span>
-                                    <div class="text-xs text-slate-500">
-                                        {{ job.career_progression_years|default:"-" }} · {{ job.career_next_position|default:"-" }}
-                                    </div>
-                                {% else %}
-                                    <span class="text-slate-400 text-xs">No</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="11">
-                                <div class="empty-state">
-                                    <i class="fas fa-briefcase-slash"></i>
-                                    <h4>No Job Demands Found</h4>
-                                    <p>Submit surveys with job demands to see them here.</p>
-                                    <a href="{% url 'survey:survey_form' %}" target="_blank" class="btn-modern btn-primary-modern inline-flex mt-4">
-                                        <i class="fas fa-plus-circle"></i> Submit New Survey
-                                    </a>
-                                </div>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon green"><i class="fas fa-users"></i></div>
+        <div class="stat-info">
+            <p>Total Current Openings</p>
+            <h3>{{ total_current|default:0 }}</h3>
         </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon orange"><i class="fas fa-rocket"></i></div>
+        <div class="stat-info">
+            <p>Total Future Demand</p>
+            <h3>{{ total_future|default:0 }}</h3>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon purple"><i class="fas fa-building"></i></div>
+        <div class="stat-info">
+            <p>Unique Employers</p>
+            <h3>{{ total_employers|default:0 }}</h3>
+        </div>
+    </div>
+</section>
 
-    </main>
-
+<!-- Table -->
+<div class="table-container">
+    <div class="table-header">
+        <h3><i class="fas fa-list-ul mr-2 text-indigo-600"></i> All Job Demand Records</h3>
+        <div class="table-search">
+            <input type="text" id="searchInput" placeholder="🔍 Search jobs..." onkeyup="filterTable()">
+            <span class="text-sm text-slate-400" id="recordCount">{{ job_demands|length }} records</span>
+        </div>
+    </div>
+    <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th># ID</th>
+                    <th>Employer</th>
+                    <th>Job Role</th>
+                    <th>Sector</th>
+                    <th>Qualification</th>
+                    <th>Experience</th>
+                    <th>Current</th>
+                    <th>6 Months</th>
+                    <th>12 Months</th>
+                    <th>Salary</th>
+                    <th>Career Prog.</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody">
+                {% for job in job_demands %}
+                <tr>
+                    <td><span class="font-bold text-indigo-600">#{{ job.id }}</span></td>
+                    <td>
+                        <div class="font-semibold text-sm">{{ job.survey.company_name }}</div>
+                        <div class="text-xs text-slate-500">{{ job.survey.company_code }}</div>
+                    </td>
+                    <td><span class="font-semibold text-blue-700">{{ job.job_role }}</span></td>
+                    <td>
+                        <span class="bg-purple-50 text-purple-700 px-3 py-1 rounded-full text-xs font-semibold">
+                            {{ job.sector }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="bg-amber-50 text-amber-700 px-3 py-1 rounded-full text-xs font-semibold">
+                            {{ job.qualification }}
+                        </span>
+                    </td>
+                    <td>{{ job.experience }}</td>
+                    <td><span class="demand-badge current">{{ job.current_openings }}</span></td>
+                    <td><span class="demand-badge future">{{ job.openings_6_months }}</span></td>
+                    <td><span class="demand-badge future">{{ job.openings_12_months }}</span></td>
+                    <td><span class="salary-range">₹{{ job.salary_offered }}</span></td>
+                    <td>
+                        {% if job.career_progression == 'Yes' %}
+                            <span class="bg-green-50 text-green-700 px-2 py-1 rounded-full text-xs font-semibold">Yes</span>
+                            <div class="text-xs text-slate-500">
+                                {{ job.career_progression_years|default:"-" }} · {{ job.career_next_position|default:"-" }}
+                            </div>
+                        {% else %}
+                            <span class="text-slate-400 text-xs">No</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="11">
+                        <div class="empty-state">
+                            <i class="fas fa-briefcase"></i>
+                            <h4>No Job Demands Found</h4>
+                            <p>Submit surveys with job demands to see them here.</p>
+                            <a href="{% url 'survey:survey_form' %}" target="_blank" class="btn-modern btn-primary-modern inline-flex mt-4">
+                                <i class="fas fa-plus-circle"></i> Submit New Survey
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
+{% endblock %}
+
+{% block extra_scripts %}
 <script>
-    // Search/Filter functionality
     function filterTable() {
         const input = document.getElementById('searchInput');
         const filter = input.value.toLowerCase();
@@ -524,52 +160,18 @@
             const row = rows[i];
             const cells = row.getElementsByTagName('td');
             let found = false;
-            
             for (let j = 0; j < cells.length; j++) {
                 const cell = cells[j];
                 if (cell) {
                     const text = cell.textContent || cell.innerText;
-                    if (text.toLowerCase().indexOf(filter) > -1) {
-                        found = true;
-                        break;
-                    }
+                    if (text.toLowerCase().indexOf(filter) > -1) { found = true; break; }
                 }
             }
-            
-            if (found) {
-                row.style.display = '';
-                visibleCount++;
-            } else {
-                row.style.display = 'none';
-            }
+            if (found) { row.style.display = ''; visibleCount++; }
+            else { row.style.display = 'none'; }
         }
-
-        document.getElementById('recordCount').textContent = visibleCount + ' records';
+        const rc = document.getElementById('recordCount');
+        if (rc) rc.textContent = visibleCount + ' records';
     }
-
-    // Live Clock
-    function updateClock() {
-        const now = new Date();
-        const options = { 
-            weekday: 'short', 
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true
-        };
-        const timeStr = now.toLocaleString('en-IN', options);
-        const headerP = document.querySelector('.header-title p');
-        if (headerP) {
-            const baseText = 'Complete list of all job demand entries with career progression details';
-            headerP.innerHTML = baseText + ' · <span class="text-indigo-600 font-semibold">' + timeStr + '</span>';
-        }
-    }
-    updateClock();
-    setInterval(updateClock, 1000);
 </script>
-
-</body>
-</html>
+{% endblock %}

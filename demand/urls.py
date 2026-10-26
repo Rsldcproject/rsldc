@@ -4,10 +4,12 @@ from . import views
 app_name = 'survey'
 
 urlpatterns = [
+    
+    path('', views.home, name='home'),
     # ============================================
     # PUBLIC FORM VIEWS
     # ============================================
-    path('', views.survey_form, name='survey_form'),
+    path('survey/', views.survey_form, name='survey_form'),
     path('api/submit/', views.submit_survey, name='submit_survey'),
     
     # ============================================

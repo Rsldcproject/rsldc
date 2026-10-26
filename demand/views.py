@@ -21,6 +21,12 @@ from .models import Survey, JobDemand, ApprenticeshipOJT, AssociationConsultatio
 
 logger = logging.getLogger(__name__)
 
+
+# ============ HOME PAGE ============
+def home(request):
+    """Home page with 3 navigation buttons."""
+    return render(request, 'home.html')
+
 # ============================================
 # PUBLIC FORM VIEWS
 # ============================================

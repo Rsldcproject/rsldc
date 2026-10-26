@@ -13,10 +13,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.db import transaction
 from django.db.models import Sum, Count, Max, Q
+from django.db.models.functions import TruncMonth # <-- नया इम्पोर्ट (MySQL फिक्स के लिए)
 from django.contrib import messages
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
-from django.views.decorators.csrf import csrf_exempt
 from .models import Survey, JobDemand, ApprenticeshipOJT, AssociationConsultation, AssociationJobRole, AssociationApprenticeship, GovtConsultation
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ def submit_survey(request):
                 contact_mobile=data.get('contact_mobile', '').strip(),
                 contact_email=data.get('contact_email', '').strip(),
                 has_hr=data.get('has_hr', 'No'),
-                workforce_profile=data.get('workforce_profile', '').strip(),
+                workforce_profile=data.get('workforce_profile', ''), # Fixed: removed .strip()
                 placement_willingness=data.get('placement_willingness', 'No'),
                 apprenticeship_willingness=data.get('apprenticeship_willingness', 'No'),
                 guest_lecture_interest=data.get('guest_lecture_interest', 'No'),
@@ -143,9 +143,9 @@ def submit_survey(request):
                     certification=job_data.get('certification', 'No'),
                     certification_detail=job_data.get('certification_detail', '').strip(),
                     salary_offered=job_data.get('salary_offered', '').strip(),
-                    current_openings=int(job_data.get('current_openings', 0)),
-                    openings_6_months=int(job_data.get('openings_6_months', 0)),
-                    openings_12_months=int(job_data.get('openings_12_months', 0)),
+                    current_openings=int(job_data.get('current_openings') or 0), # Fixed: int("") crash
+                    openings_6_months=int(job_data.get('openings_6_months') or 0),
+                    openings_12_months=int(job_data.get('openings_12_months') or 0),
                     apprentice_ojt=job_data.get('apprentice_ojt', 'No'),
                     apprentice_ojt_detail=job_data.get('apprentice_ojt_detail', '').strip(),
                     gender_suitability=job_data.get('gender_suitability', 'Any / No Preference'),
@@ -169,9 +169,9 @@ def submit_survey(request):
                     row_no=idx,
                     job_role=app_data.get('job_role', '').strip(),
                     opportunity_type=app_data.get('opportunity_type', ''),
-                    seats_capacity=int(app_data.get('seats_capacity', 0)),
-                    duration_months=int(app_data.get('duration_months', 0)),
-                    monthly_stipend=int(app_data.get('monthly_stipend', 0)),
+                    seats_capacity=int(app_data.get('seats_capacity') or 0),
+                    duration_months=int(app_data.get('duration_months') or 0),
+                    monthly_stipend=int(app_data.get('monthly_stipend') or 0),
                     expected_start_month=app_data.get('expected_start_month', ''),
                     minimum_qualification=app_data.get('minimum_qualification', '').strip(),
                     minimum_qualification_other=app_data.get('minimum_qualification_other', '').strip(),
@@ -339,13 +339,13 @@ def admin_dashboard(request):
         all_sectors = JobDemand.objects.values_list('sector', flat=True).distinct().order_by('sector')
         all_sectors = [s for s in all_sectors if s]
         
-        # Monthly trend
+        # Monthly trend (MySQL Compatible Fix)
         six_months_ago = datetime.now() - timedelta(days=180)
-        monthly_data = survey_qs.filter(created_at__gte=six_months_ago).extra(
-            select={'month': "strftime('%%Y-%%m', created_at)"}
-        ).values('month').annotate(count=Count('id')).order_by('month')
+        monthly_data = survey_qs.filter(created_at__gte=six_months_ago).annotate(
+            month_trunc=TruncMonth('created_at')
+        ).values('month_trunc').annotate(count=Count('id')).order_by('month_trunc')
         
-        monthly_trend = [{'month': m['month'], 'count': m['count']} for m in monthly_data]
+        monthly_trend = [{'month': m['month_trunc'].strftime('%Y-%m'), 'count': m['count']} for m in monthly_data if m['month_trunc']]
         
         context = {
             'total_surveys': total_surveys,
@@ -417,19 +417,15 @@ def admin_surveys(request):
 @login_required
 @csrf_exempt
 def update_survey(request, survey_id):
-    """Update survey data"""
     if request.method != 'POST':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
-    
     try:
         data = json.loads(request.body)
         survey = Survey.objects.get(id=survey_id)
-        
         for key, value in data.items():
             if hasattr(survey, key):
                 setattr(survey, key, value)
         survey.save()
-        
         return JsonResponse({'status': 'success', 'message': 'Survey updated successfully'})
     except Survey.DoesNotExist:
         return JsonResponse({'status': 'error', 'message': 'Survey not found'}, status=404)
@@ -440,10 +436,8 @@ def update_survey(request, survey_id):
 @login_required
 @csrf_exempt 
 def delete_survey(request, survey_id):
-    """Delete survey and related data"""
     if request.method != 'DELETE':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
-    
     try:
         survey = Survey.objects.get(id=survey_id)
         if survey.supporting_document:
@@ -460,19 +454,15 @@ def delete_survey(request, survey_id):
 @login_required
 @csrf_exempt
 def update_job_demand(request, job_id):
-    """Update job demand"""
     if request.method != 'POST':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
-    
     try:
         data = json.loads(request.body)
         job = JobDemand.objects.get(id=job_id)
-        
         for key, value in data.items():
             if hasattr(job, key):
                 setattr(job, key, value)
         job.save()
-        
         return JsonResponse({'status': 'success', 'message': 'Job demand updated successfully'})
     except JobDemand.DoesNotExist:
         return JsonResponse({'status': 'error', 'message': 'Job demand not found'}, status=404)
@@ -483,10 +473,8 @@ def update_job_demand(request, job_id):
 @login_required
 @csrf_exempt 
 def delete_job_demand(request, job_id):
-    """Delete job demand"""
     if request.method != 'DELETE':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
-    
     try:
         job = JobDemand.objects.get(id=job_id)
         job.delete()
@@ -500,19 +488,15 @@ def delete_job_demand(request, job_id):
 @login_required
 @csrf_exempt
 def update_apprenticeship(request, app_id):
-    """Update apprenticeship/OJT"""
     if request.method != 'POST':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
-    
     try:
         data = json.loads(request.body)
         app = ApprenticeshipOJT.objects.get(id=app_id)
-        
         for key, value in data.items():
             if hasattr(app, key):
                 setattr(app, key, value)
         app.save()
-        
         return JsonResponse({'status': 'success', 'message': 'Apprenticeship updated successfully'})
     except ApprenticeshipOJT.DoesNotExist:
         return JsonResponse({'status': 'error', 'message': 'Apprenticeship not found'}, status=404)
@@ -523,10 +507,8 @@ def update_apprenticeship(request, app_id):
 @login_required
 @csrf_exempt 
 def delete_apprenticeship(request, app_id):
-    """Delete apprenticeship/OJT"""
     if request.method != 'DELETE':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
-    
     try:
         app = ApprenticeshipOJT.objects.get(id=app_id)
         app.delete()
@@ -539,15 +521,11 @@ def delete_apprenticeship(request, app_id):
 
 @login_required
 def admin_job_demands(request):
-    """View all job demands with updated fields"""
     job_demands = JobDemand.objects.all().select_related('survey')
-    
-    # Calculate totals for stats
     total_current = job_demands.aggregate(total=Sum('current_openings'))['total'] or 0
     total_future_6 = job_demands.aggregate(total=Sum('openings_6_months'))['total'] or 0
     total_future_12 = job_demands.aggregate(total=Sum('openings_12_months'))['total'] or 0
     total_future = total_future_6 + total_future_12
-    
     return render(request, 'portal/job_demands.html', {
         'job_demands': job_demands,
         'total_current': total_current,
@@ -566,7 +544,6 @@ def get_chart_data(request):
     total_current = JobDemand.objects.aggregate(total=Sum('current_openings'))['total'] or 0
     total_future_6 = JobDemand.objects.aggregate(total=Sum('openings_6_months'))['total'] or 0
     total_future_12 = JobDemand.objects.aggregate(total=Sum('openings_12_months'))['total'] or 0
-    
     return JsonResponse({
         'current_demand': total_current,
         'future_demand': total_future_6 + total_future_12
@@ -577,7 +554,6 @@ def get_chart_data(request):
 def debug_data(request):
     surveys = Survey.objects.all()
     jobs = JobDemand.objects.all()
-    
     data = {
         'survey_count': surveys.count(),
         'job_count': jobs.count(),
@@ -594,7 +570,6 @@ def get_survey_detail(request, survey_id):
         job_demands = survey.job_demands.all()
         apprenticeships = survey.apprenticeships.all()
         
-        # Parse workforce profile
         workforce_list = []
         try:
             if isinstance(survey.workforce_profile, str):
@@ -700,10 +675,8 @@ def admin_export_full_csv(request):
     """Export complete survey data with all fields"""
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="survey_full_data_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv"'
-    
     writer = csv.writer(response)
     
-    # ===== MAIN HEADERS =====
     main_headers = [
         'Survey ID', 'Company Code', 'Company Name', 
         'Organisation Type', 'Organisation Type (Other)',
@@ -723,7 +696,6 @@ def admin_export_full_csv(request):
         'Submission Date', 'Created At'
     ]
     
-    # ===== WORKFORCE PROFILE HEADERS =====
     max_workforce = 0
     for survey in Survey.objects.all():
         try:
@@ -745,66 +717,38 @@ def admin_export_full_csv(request):
             f'Workforce-{i} (Apprentice/Interns)'
         ])
     
-    # ===== JOB DEMAND HEADERS =====
     max_jobs = JobDemand.objects.values('survey').annotate(job_count=Count('id')).aggregate(Max('job_count'))['job_count__max'] or 0
-    
     job_headers = []
     for i in range(1, max_jobs + 1):
         job_headers.extend([
-            f'Job Demand-{i} (Job Role)',
-            f'Job Demand-{i} (Sector)',
-            f'Job Demand-{i} (Qualification)',
-            f'Job Demand-{i} (Qualification Other)',
-            f'Job Demand-{i} (Experience)',
-            f'Job Demand-{i} (Certification)',
-            f'Job Demand-{i} (Certification Detail)',
-            f'Job Demand-{i} (Salary Offered)',
-            f'Job Demand-{i} (Current Openings)',
-            f'Job Demand-{i} (6 Months)',
-            f'Job Demand-{i} (12 Months)',
-            f'Job Demand-{i} (Apprentice/OJT)',
-            f'Job Demand-{i} (Apprentice/OJT Detail)',
-            f'Job Demand-{i} (Gender Suitability)',
-            f'Job Demand-{i} (PwD)',
-            f'Job Demand-{i} (Career Progression)',
-            f'Job Demand-{i} (Career Progression Years)',
-            f'Job Demand-{i} (Career Next Position)',
-            f'Job Demand-{i} (Career Next Salary)',
-            f'Job Demand-{i} (Additional Remarks)'
+            f'Job Demand-{i} (Job Role)', f'Job Demand-{i} (Sector)',
+            f'Job Demand-{i} (Qualification)', f'Job Demand-{i} (Qualification Other)',
+            f'Job Demand-{i} (Experience)', f'Job Demand-{i} (Certification)',
+            f'Job Demand-{i} (Certification Detail)', f'Job Demand-{i} (Salary Offered)',
+            f'Job Demand-{i} (Current Openings)', f'Job Demand-{i} (6 Months)',
+            f'Job Demand-{i} (12 Months)', f'Job Demand-{i} (Apprentice/OJT)',
+            f'Job Demand-{i} (Apprentice/OJT Detail)', f'Job Demand-{i} (Gender Suitability)',
+            f'Job Demand-{i} (PwD)', f'Job Demand-{i} (Career Progression)',
+            f'Job Demand-{i} (Career Progression Years)', f'Job Demand-{i} (Career Next Position)',
+            f'Job Demand-{i} (Career Next Salary)', f'Job Demand-{i} (Additional Remarks)'
         ])
     
-    # ===== APPRENTICESHIP HEADERS =====
     max_apps = ApprenticeshipOJT.objects.values('survey').annotate(app_count=Count('id')).aggregate(Max('app_count'))['app_count__max'] or 0
-    
     app_headers = []
     for i in range(1, max_apps + 1):
         app_headers.extend([
-            f'Apprenticeship-{i} (Job Role)',
-            f'Apprenticeship-{i} (Opportunity Type)',
-            f'Apprenticeship-{i} (Seats/Capacity)',
-            f'Apprenticeship-{i} (Duration Months)',
-            f'Apprenticeship-{i} (Monthly Stipend)',
-            f'Apprenticeship-{i} (Expected Start Month)',
-            f'Apprenticeship-{i} (Minimum Qualification)',
-            f'Apprenticeship-{i} (Min Qualification Other)',
+            f'Apprenticeship-{i} (Job Role)', f'Apprenticeship-{i} (Opportunity Type)',
+            f'Apprenticeship-{i} (Seats/Capacity)', f'Apprenticeship-{i} (Duration Months)',
+            f'Apprenticeship-{i} (Monthly Stipend)', f'Apprenticeship-{i} (Expected Start Month)',
+            f'Apprenticeship-{i} (Minimum Qualification)', f'Apprenticeship-{i} (Min Qualification Other)',
             f'Apprenticeship-{i} (Conversion to Employment)'
         ])
     
-    # ===== TOTAL HEADERS =====
-    total_headers = [
-        'Total Current Demand',
-        'Total Future Demand',
-        'Total 6 Months Demand',
-        'Total 12 Months Demand'
-    ]
-    
-    # Combine all headers
+    total_headers = ['Total Current Demand', 'Total Future Demand', 'Total 6 Months Demand', 'Total 12 Months Demand']
     all_headers = main_headers + workforce_headers + job_headers + app_headers + total_headers
     writer.writerow(all_headers)
     
-    # ===== DATA =====
     for survey in Survey.objects.all().prefetch_related('job_demands', 'apprenticeships'):
-        # Parse workforce profile
         workforce_list = []
         try:
             if isinstance(survey.workforce_profile, str):
@@ -815,114 +759,62 @@ def admin_export_full_csv(request):
             workforce_list = []
         
         row = [
-            survey.id,
-            survey.company_code or '',
-            survey.company_name,
-            survey.organisation_type or '',
-            survey.organisation_type_other or '',
-            survey.product_service or '',
-            survey.product_service_specify or '',
-            survey.operational_sector or '',
-            survey.operational_sector_other or '',
-            survey.company_size or '',
-            survey.district or '',
-            survey.block or '',
-            survey.address or '',
-            survey.website or '',
-            survey.contact_name or '',
-            survey.contact_mobile or '',
-            survey.contact_email or '',
-            survey.has_hr or 'No',
-            survey.field_officer_name or '',
-            survey.field_officer_signature or '',
-            survey.placement_willingness or '',
-            survey.apprenticeship_willingness or '',
-            survey.guest_lecture_interest or '',
-            survey.industrial_visit_interest or '',
-            survey.csr_interest or '',
-            survey.ojt_internship_willingness or '',
-            survey.recruitment_challenges or '',
-            survey.additional_remarks or '',
-            survey.supporting_evidence or '',
-            survey.supporting_document.name if survey.supporting_document else '',
+            survey.id, survey.company_code or '', survey.company_name,
+            survey.organisation_type or '', survey.organisation_type_other or '',
+            survey.product_service or '', survey.product_service_specify or '',
+            survey.operational_sector or '', survey.operational_sector_other or '',
+            survey.company_size or '', survey.district or '', survey.block or '',
+            survey.address or '', survey.website or '', survey.contact_name or '',
+            survey.contact_mobile or '', survey.contact_email or '', survey.has_hr or 'No',
+            survey.field_officer_name or '', survey.field_officer_signature or '',
+            survey.placement_willingness or '', survey.apprenticeship_willingness or '',
+            survey.guest_lecture_interest or '', survey.industrial_visit_interest or '',
+            survey.csr_interest or '', survey.ojt_internship_willingness or '',
+            survey.recruitment_challenges or '', survey.additional_remarks or '',
+            survey.supporting_evidence or '', survey.supporting_document.name if survey.supporting_document else '',
             survey.submission_date.strftime('%Y-%m-%d') if survey.submission_date else '',
             survey.created_at.strftime('%Y-%m-%d %H:%M:%S')
         ]
         
-        # Add Workforce Profile data
         for i in range(max_workforce):
             if i < len(workforce_list):
                 w = workforce_list[i]
-                row.extend([
-                    w.get('position', ''),
-                    w.get('onroll', 0),
-                    w.get('contractual', 0),
-                    w.get('apprentice', 0)
-                ])
+                row.extend([w.get('position', ''), w.get('onroll', 0), w.get('contractual', 0), w.get('apprentice', 0)])
             else:
                 row.extend([''] * 4)
         
-        # Add Job Demands data
         job_list = list(survey.job_demands.all())
         for i in range(max_jobs):
             if i < len(job_list):
                 job = job_list[i]
                 row.extend([
-                    job.job_role,
-                    job.sector,
-                    job.qualification,
-                    job.qualification_other or '',
-                    job.experience,
-                    job.certification,
-                    job.certification_detail or '',
-                    job.salary_offered,
-                    job.current_openings,
-                    job.openings_6_months,
-                    job.openings_12_months,
-                    job.apprentice_ojt,
-                    job.apprentice_ojt_detail or '',
-                    job.gender_suitability,
-                    job.pwd,
-                    job.career_progression,
-                    job.career_progression_years or '',
-                    job.career_next_position or '',
-                    job.career_next_salary or '',
-                    job.additional_remarks or ''
+                    job.job_role, job.sector, job.qualification, job.qualification_other or '',
+                    job.experience, job.certification, job.certification_detail or '',
+                    job.salary_offered, job.current_openings, job.openings_6_months,
+                    job.openings_12_months, job.apprentice_ojt, job.apprentice_ojt_detail or '',
+                    job.gender_suitability, job.pwd, job.career_progression,
+                    job.career_progression_years or '', job.career_next_position or '',
+                    job.career_next_salary or '', job.additional_remarks or ''
                 ])
             else:
                 row.extend([''] * 20)
         
-        # Add Apprenticeships data
         app_list = list(survey.apprenticeships.all())
         for i in range(max_apps):
             if i < len(app_list):
                 app = app_list[i]
                 row.extend([
-                    app.job_role,
-                    app.opportunity_type,
-                    app.seats_capacity,
-                    app.duration_months,
-                    app.monthly_stipend,
-                    app.expected_start_month or '',
-                    app.minimum_qualification,
-                    app.minimum_qualification_other or '',
+                    app.job_role, app.opportunity_type, app.seats_capacity,
+                    app.duration_months, app.monthly_stipend, app.expected_start_month or '',
+                    app.minimum_qualification, app.minimum_qualification_other or '',
                     app.conversion_to_employment
                 ])
             else:
                 row.extend([''] * 9)
         
-        # Add Totals
-        row.extend([
-            survey.total_current_demand,
-            survey.total_future_demand,
-            survey.total_demand_6_months,
-            survey.total_demand_12_months
-        ])
-        
+        row.extend([survey.total_current_demand, survey.total_future_demand, survey.total_demand_6_months, survey.total_demand_12_months])
         writer.writerow(row)
-    
     return response
-
 
 
 # ============================================
@@ -930,20 +822,17 @@ def admin_export_full_csv(request):
 # ============================================
 
 def association_form(request):
-    """Render the association consultation form"""
     return render(request, 'association_form.html')
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def submit_association(request):
-    """Submit association consultation form"""
     print("="*60)
     print("🔵 SUBMIT ASSOCIATION API CALLED")
     print("="*60)
     
     try:
-        # Check if request is multipart form data
         if request.content_type and 'multipart/form-data' in request.content_type:
             data = request.POST.dict()
             files = request.FILES
@@ -954,7 +843,6 @@ def submit_association(request):
         print(f"✅ Data Parsed Successfully")
         
         with transaction.atomic():
-            # Parse date fields
             consultation_date = data.get('consultation_date')
             if consultation_date:
                 consultation_date = datetime.strptime(consultation_date, '%Y-%m-%d').date()
@@ -967,7 +855,6 @@ def submit_association(request):
             else:
                 submission_date = datetime.now().date()
             
-            # Parse recruitment challenges from JSON string
             recruitment_challenges = data.get('recruitment_challenges', '[]')
             if isinstance(recruitment_challenges, str):
                 try:
@@ -975,7 +862,6 @@ def submit_association(request):
                 except:
                     recruitment_challenges = []
             
-            # Create consultation
             consultation = AssociationConsultation.objects.create(
                 consultation_id=data.get('consultation_id', '').strip(),
                 district_region=data.get('district_region', '').strip(),
@@ -1030,7 +916,7 @@ def submit_association(request):
                 placement_actions=data.get('placement_actions', '').strip(),
                 policy_support=data.get('policy_support', '').strip(),
                 additional_remarks=data.get('additional_remarks', '').strip(),
-                supporting_evidence=data.get('supporting_evidence', '').strip(),
+                supporting_evidence=data.get('supporting_evidence', ''), # Fixed removed strip
                 demand_evidence_status=data.get('demand_evidence_status', '').strip(),
                 respondent_signature=data.get('respondent_signature', '').strip(),
                 facilitator_signature=data.get('facilitator_signature', '').strip(),
@@ -1039,14 +925,10 @@ def submit_association(request):
             
             print(f"✅ Consultation Created! ID: {consultation.id}")
             
-            # Handle file upload
             if 'supporting_document' in files:
                 uploaded_file = files['supporting_document']
                 if uploaded_file.size > 50 * 1024:
-                    return JsonResponse({
-                        'status': 'error',
-                        'message': 'File size exceeds 50KB limit.'
-                    }, status=400)
+                    return JsonResponse({'status': 'error', 'message': 'File size exceeds 50KB limit.'}, status=400)
                 
                 file_name = f"assoc_{consultation.id}_{uploaded_file.name}"
                 saved_path = default_storage.save(
@@ -1056,7 +938,6 @@ def submit_association(request):
                 consultation.supporting_document = saved_path
                 consultation.save()
             
-            # Parse and create job roles
             job_roles_data = data.get('job_demands', '[]')
             if isinstance(job_roles_data, str):
                 try:
@@ -1065,7 +946,6 @@ def submit_association(request):
                     job_roles_data = []
             
             for idx, job_data in enumerate(job_roles_data, 1):
-                # Parse mobility checkboxes
                 mobility = job_data.get('mobility', [])
                 if isinstance(mobility, str):
                     try:
@@ -1087,24 +967,22 @@ def submit_association(request):
                     salary=job_data.get('salary', '').strip(),
                     salary_period=job_data.get('salary_period', '').strip(),
                     employment_type=job_data.get('employment_type', '').strip(),
-                    current_openings=int(job_data.get('current_openings', 0)),
-                    openings_6_months=int(job_data.get('openings_6_months', 0)),
-                    openings_12_months=int(job_data.get('openings_12_months', 0)),
+                    current_openings=int(job_data.get('current_openings') or 0), # Fixed int crash
+                    openings_6_months=int(job_data.get('openings_6_months') or 0),
+                    openings_12_months=int(job_data.get('openings_12_months') or 0),
                     tech_skills=job_data.get('tech_skills', '').strip(),
                     employability_skills=job_data.get('employability_skills', '').strip(),
                     women_suitable=job_data.get('women_suitable', 'Yes'),
                     pwd=job_data.get('pwd', 'Yes'),
                     mobility=mobility,
-                    apprentice_seats=int(job_data.get('apprentice_seats', 0)),
-                    ojt_seats=int(job_data.get('ojt_seats', 0)),
-                    internship_seats=int(job_data.get('internship_seats', 0)),
-                    reporting_employers=int(job_data.get('reporting_employers', 0)),
+                    apprentice_seats=int(job_data.get('apprentice_seats') or 0),
+                    ojt_seats=int(job_data.get('ojt_seats') or 0),
+                    internship_seats=int(job_data.get('internship_seats') or 0),
+                    reporting_employers=int(job_data.get('reporting_employers') or 0),
                     employer_list_attached=job_data.get('employer_list_attached', False),
                     remarks=job_data.get('remarks', '').strip()
                 )
-                print(f"  ✅ Job Role #{idx} Created!")
             
-            # Parse and create apprenticeships
             apprenticeships_data = data.get('apprenticeships', '[]')
             if isinstance(apprenticeships_data, str):
                 try:
@@ -1118,15 +996,14 @@ def submit_association(request):
                     row_no=idx,
                     job_role=app_data.get('job_role', '').strip(),
                     opportunity_type=app_data.get('opportunity_type', '').strip(),
-                    employers_interested=int(app_data.get('employers_interested', 0)),
-                    seats=int(app_data.get('seats', 0)),
-                    duration=int(app_data.get('duration', 0)),
+                    employers_interested=int(app_data.get('employers_interested') or 0),
+                    seats=int(app_data.get('seats') or 0),
+                    duration=int(app_data.get('duration') or 0),
                     stipend=app_data.get('stipend', '').strip(),
                     start_period=app_data.get('start_period', '').strip(),
                     conversion=app_data.get('conversion', 'Not known'),
                     employer_list=app_data.get('employer_list', 'No')
                 )
-                print(f"  ✅ Apprenticeship #{idx} Created!")
         
         return JsonResponse({
             'status': 'success',
@@ -1145,9 +1022,7 @@ def submit_association(request):
 
 @login_required
 def admin_association_list(request):
-    """List all association consultations"""
     consultations = AssociationConsultation.objects.all().prefetch_related('job_roles', 'apprenticeship_opportunities')
-    
     context = {
         'consultations': consultations,
         'total_consultations': consultations.count(),
@@ -1159,7 +1034,6 @@ def admin_association_list(request):
 
 @login_required
 def get_association_detail(request, consultation_id):
-    """Get detailed association consultation data"""
     try:
         consultation = AssociationConsultation.objects.get(id=consultation_id)
         job_roles = consultation.job_roles.all()
@@ -1290,10 +1164,8 @@ def get_association_detail(request, consultation_id):
 @login_required
 @csrf_exempt
 def delete_association(request, consultation_id):
-    """Delete association consultation and related data"""
     if request.method != 'DELETE':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
-    
     try:
         consultation = AssociationConsultation.objects.get(id=consultation_id)
         if consultation.supporting_document:
@@ -1309,13 +1181,10 @@ def delete_association(request, consultation_id):
 
 @login_required
 def admin_export_association_csv(request):
-    """Export association consultation data to CSV"""
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="association_consultations_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv"'
-    
     writer = csv.writer(response)
     
-    # Headers
     headers = [
         'Consultation ID', 'Date', 'Association Name', 'Association Type', 'Primary Sector',
         'District/Region', 'Surveyor Name', 'Respondent Name', 'Respondent Mobile',
@@ -1354,74 +1223,41 @@ def admin_export_association_csv(request):
 # ============================================================
 
 def govt_form(request):
-    """Render the government department consultation form"""
-    print("=" * 60)
-    print("🟢 GOVT FORM VIEW CALLED")
-    print("=" * 60)
     return render(request, 'govt_form.html')
 
 
 @csrf_exempt
 @require_http_methods(["POST", "OPTIONS"])
 def submit_govt(request):
-    """Submit government department consultation form"""
     print("=" * 60)
     print("🔵 SUBMIT GOVT CONSULTATION API CALLED")
-    print(f"   Method: {request.method}")
-    print(f"   Content-Type: {request.content_type}")
-    print(f"   Has POST data: {bool(request.POST)}")
-    print(f"   Has FILES: {bool(request.FILES)}")
     print("=" * 60)
 
-    # Handle OPTIONS preflight (CORS)
     if request.method == "OPTIONS":
         return JsonResponse({'status': 'ok'}, status=200)
 
     try:
-        # ------------------------------------------------------------
-        # STEP 1: Parse request data
-        # ------------------------------------------------------------
         files = {}
         content_type = (request.content_type or '').lower()
 
         if 'multipart/form-data' in content_type:
             data = request.POST.dict()
             files = request.FILES
-            print("📦 Parsed as multipart/form-data")
-            print(f"   Fields received: {list(data.keys())}")
-            print(f"   Files received: {list(files.keys())}")
         elif 'application/json' in content_type:
             try:
                 data = json.loads(request.body)
-                print("📦 Parsed as application/json")
             except Exception as je:
-                print(f"❌ JSON parse error: {je}")
-                return JsonResponse({
-                    'status': 'error',
-                    'message': f'Invalid JSON: {je}'
-                }, status=400)
+                return JsonResponse({'status': 'error', 'message': f'Invalid JSON: {je}'}, status=400)
         else:
-            # Fallback: try POST first, then JSON
             if request.POST:
                 data = request.POST.dict()
                 files = request.FILES
-                print("📦 Parsed as urlencoded form")
             else:
                 try:
                     data = json.loads(request.body or b'{}')
-                    print("📦 Parsed as raw JSON fallback")
                 except Exception as fe:
-                    print(f"❌ Unable to parse body: {fe}")
-                    return JsonResponse({
-                        'status': 'error',
-                        'message': 'Unsupported or malformed request body.'
-                    }, status=400)
+                    return JsonResponse({'status': 'error', 'message': 'Unsupported or malformed request body.'}, status=400)
 
-        print(f"✅ Data parsed. Keys: {list(data.keys())[:30]}")
-
-        # ------------------------------------------------------------
-        # STEP 2: Helper to parse JSON list fields
-        # ------------------------------------------------------------
         def parse_json_field(field_name, default=None):
             if default is None:
                 default = []
@@ -1429,20 +1265,15 @@ def submit_govt(request):
             if isinstance(val, str):
                 try:
                     return json.loads(val)
-                except Exception as pe:
-                    print(f"⚠️ Could not parse JSON field '{field_name}': {pe}. Raw: {val[:120]}")
+                except Exception:
                     return default
             return val if val is not None else default
 
-        # ------------------------------------------------------------
-        # STEP 3: Parse dates
-        # ------------------------------------------------------------
         consultation_date = data.get('consultation_date', '').strip()
         if consultation_date:
             try:
                 consultation_date = datetime.strptime(consultation_date, '%Y-%m-%d').date()
             except ValueError:
-                print(f"⚠️ Invalid consultation_date: {consultation_date}. Using today.")
                 consultation_date = datetime.now().date()
         else:
             consultation_date = datetime.now().date()
@@ -1456,9 +1287,6 @@ def submit_govt(request):
         else:
             submission_date = datetime.now().date()
 
-        # ------------------------------------------------------------
-        # STEP 4: Parse JSON fields
-        # ------------------------------------------------------------
         office_visited = parse_json_field('office_visited')
         body_type = parse_json_field('body_type')
         jurisdiction = parse_json_field('jurisdiction')
@@ -1469,24 +1297,12 @@ def submit_govt(request):
         recruitment_challenges = parse_json_field('recruitment_challenges')
         supporting_evidence = parse_json_field('supporting_evidence')
 
-        print(f"   office_visited: {office_visited}")
-        print(f"   body_type: {body_type}")
-        print(f"   jurisdiction: {jurisdiction}")
-        print(f"   investment_pipeline rows: {len(investment_pipeline)}")
-        print(f"   occupational_categories rows: {len(occupational_categories)}")
-
-        # ------------------------------------------------------------
-        # STEP 5: Parse integer field
-        # ------------------------------------------------------------
         aware_count = data.get('aware_establishments_count', '').strip()
         try:
             aware_count = int(aware_count) if aware_count else None
         except (ValueError, TypeError):
             aware_count = None
 
-        # ------------------------------------------------------------
-        # STEP 6: Validate mandatory fields
-        # ------------------------------------------------------------
         required_fields = {
             'consultation_id': 'Consultation ID',
             'district_region': 'District / Region',
@@ -1502,15 +1318,8 @@ def submit_govt(request):
                 missing.append(label)
 
         if missing:
-            print(f"❌ Missing required fields: {missing}")
-            return JsonResponse({
-                'status': 'error',
-                'message': f'Missing required fields: {", ".join(missing)}'
-            }, status=400)
+            return JsonResponse({'status': 'error', 'message': f'Missing required fields: {", ".join(missing)}'}, status=400)
 
-        # ------------------------------------------------------------
-        # STEP 7: Create consultation record
-        # ------------------------------------------------------------
         with transaction.atomic():
             consultation = GovtConsultation.objects.create(
                 consultation_id=data.get('consultation_id', '').strip(),
@@ -1568,20 +1377,10 @@ def submit_govt(request):
                 official_stamp=(str(data.get('official_stamp', '')).lower() in ['true', 'on', '1', 'yes']),
             )
 
-            print(f"✅ Govt Consultation Created! ID: {consultation.id}")
-
-            # --------------------------------------------------------
-            # STEP 8: Handle file upload
-            # --------------------------------------------------------
             if 'supporting_document' in files:
                 uploaded_file = files['supporting_document']
-                print(f"📎 File received: {uploaded_file.name} ({uploaded_file.size} bytes)")
-
                 if uploaded_file.size > 50 * 1024:
-                    print(f"❌ File too large: {uploaded_file.size} bytes")
-                    # Roll back the transaction by raising
                     raise ValueError('File size exceeds 50KB limit.')
-
                 file_name = f"govt_{consultation.id}_{uploaded_file.name}"
                 saved_path = default_storage.save(
                     os.path.join('govt_documents', file_name),
@@ -1589,7 +1388,6 @@ def submit_govt(request):
                 )
                 consultation.supporting_document = saved_path
                 consultation.save()
-                print(f"✅ File saved: {saved_path}")
 
         return JsonResponse({
             'status': 'success',
@@ -1598,26 +1396,16 @@ def submit_govt(request):
         }, status=201)
 
     except ValueError as ve:
-        print(f"❌ Validation error: {ve}")
-        return JsonResponse({
-            'status': 'error',
-            'message': str(ve)
-        }, status=400)
-
+        return JsonResponse({'status': 'error', 'message': str(ve)}, status=400)
     except Exception as e:
         print(f"❌ ERROR: {str(e)}")
         traceback.print_exc()
-        return JsonResponse({
-            'status': 'error',
-            'message': f'{type(e).__name__}: {str(e)}'
-        }, status=500)
+        return JsonResponse({'status': 'error', 'message': f'{type(e).__name__}: {str(e)}'}, status=500)
 
 
 @login_required
 def admin_govt_list(request):
-    """List all government consultations"""
     consultations = GovtConsultation.objects.all()
-
     context = {
         'consultations': consultations,
         'total_consultations': consultations.count(),
@@ -1630,7 +1418,6 @@ def admin_govt_list(request):
 
 @login_required
 def get_govt_detail(request, consultation_id):
-    """Get detailed government consultation data"""
     try:
         consultation = GovtConsultation.objects.get(id=consultation_id)
 
@@ -1717,10 +1504,8 @@ def get_govt_detail(request, consultation_id):
 @login_required
 @csrf_exempt
 def delete_govt(request, consultation_id):
-    """Delete government consultation and related data"""
     if request.method != 'DELETE':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
-
     try:
         consultation = GovtConsultation.objects.get(id=consultation_id)
         if consultation.supporting_document:
@@ -1736,18 +1521,10 @@ def delete_govt(request, consultation_id):
 
 @login_required
 def admin_export_govt_csv(request):
-    """
-    Export government consultation data to CSV
-    -- Detailed export matching all fields in govt_form.html
-    -- Multi-row data (Investment Pipeline, Sectoral Analysis, Occupational Categories)
-       is exported using max-row column expansion (same pattern as survey export)
-    """
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="govt_consultations_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv"'
-
     writer = csv.writer(response)
 
-    # ===== HELPER: safely parse a JSON list field =====
     def ensure_list(val):
         if isinstance(val, list):
             return val
@@ -1758,7 +1535,6 @@ def admin_export_govt_csv(request):
                 return []
         return []
 
-    # ===== HELPER: max rows across all consultations for a given list field =====
     def get_max_rows(field_name):
         max_rows = 0
         for c in GovtConsultation.objects.all():
@@ -1767,218 +1543,111 @@ def admin_export_govt_csv(request):
                 max_rows = len(rows)
         return max_rows
 
-    # ===== CALCULATE MAX ROWS FOR EACH MULTI-ROW FIELD =====
     max_inv_rows = get_max_rows('investment_pipeline')
     max_sector_rows = get_max_rows('sectoral_analysis')
     max_occ_rows = get_max_rows('occupational_categories')
 
-    # ===== MAIN (SINGLE-VALUE) HEADERS =====
     main_headers = [
-        'Consultation ID',
-        'District / Region',
-        'Mode',
-        'Mode (Other)',
-        'Consultation Date',
-        'Surveyor Name',
-        'Office Visited',
-        'Office Visited (Other)',
-        'Body Type',
-        'Body Type (Other)',
-        'Jurisdiction',
-        'Jurisdiction (Other)',
-        'Respondent Name',
-        'Respondent Mobile',
-        'Respondent Email',
-        'Office Address',
-        'Department Website',
-        'Nodal Officer Name',
-        'Nodal Officer Mobile',
-        'Nodal Officer Email',
-        'E.2 Upcoming Schemes',
-        'E.3 Emerging Technologies',
-        'Aware of Establishments',
-        'Can Facilitate',
-        'Approx. No. of Such Establishments',
-        'Concentration Sectors',
-        'Known Employers',
-        'Facilitation Mode',
-        'Recruitment Challenges',
-        'Most Difficult-to-Fill Roles',
-        'Emerging Job Roles',
-        'Changing Technical Competencies',
-        'Employability Skill Gaps',
-        'Districts / Clusters with Highest Demand',
-        'Reasons for Unfilled Vacancies',
-        'Manpower & Operational Challenges',
-        'Facilitate Employer Surveys',
-        'Share Registration Data',
-        'Participate in Coordination',
-        'Share Periodic Demand Updates',
-        'Dept. Nodal Officer Name',
-        'Dept. Nodal Officer Mobile',
-        'Dept. Nodal Officer Email',
-        'Supporting Evidence',
-        'Demand Evidence Status',
-        'Submission Date',
-        'Place',
-        'Authorized Signature',
-        'Respondent Signature',
-        'Official Stamp',
-        'Supporting Document',
-        'Total Investment Pipeline (₹ Cr)',
-        'Total Current Openings',
-        'Total Projected Demand',
-        'Created At',
+        'Consultation ID', 'District / Region', 'Mode', 'Mode (Other)',
+        'Consultation Date', 'Surveyor Name', 'Office Visited', 'Office Visited (Other)',
+        'Body Type', 'Body Type (Other)', 'Jurisdiction', 'Jurisdiction (Other)',
+        'Respondent Name', 'Respondent Mobile', 'Respondent Email',
+        'Office Address', 'Department Website', 'Nodal Officer Name', 'Nodal Officer Mobile',
+        'Nodal Officer Email', 'E.2 Upcoming Schemes', 'E.3 Emerging Technologies',
+        'Aware of Establishments', 'Can Facilitate', 'Approx. No. of Such Establishments',
+        'Concentration Sectors', 'Known Employers', 'Facilitation Mode', 'Recruitment Challenges',
+        'Most Difficult-to-Fill Roles', 'Emerging Job Roles', 'Changing Technical Competencies',
+        'Employability Skill Gaps', 'Districts / Clusters with Highest Demand', 'Reasons for Unfilled Vacancies',
+        'Manpower & Operational Challenges', 'Facilitate Employer Surveys', 'Share Registration Data',
+        'Participate in Coordination', 'Share Periodic Demand Updates', 'Dept. Nodal Officer Name',
+        'Dept. Nodal Officer Mobile', 'Dept. Nodal Officer Email', 'Supporting Evidence',
+        'Demand Evidence Status', 'Submission Date', 'Place', 'Authorized Signature',
+        'Respondent Signature', 'Official Stamp', 'Supporting Document',
+        'Total Investment Pipeline (₹ Cr)', 'Total Current Openings', 'Total Projected Demand', 'Created At'
     ]
 
-    # ===== INVESTMENT PIPELINE HEADERS (C) =====
     inv_headers = []
     for i in range(1, max_inv_rows + 1):
         inv_headers.extend([
-            f'Investment-{i} (Sector Classification)',
-            f'Investment-{i} (Dominant / Existing Sectors)',
-            f'Investment-{i} (Emerging Sectors)',
-            f'Investment-{i} (Approx. Investment ₹ Cr)',
-            f'Investment-{i} (Specific District)',
+            f'Investment-{i} (Sector Classification)', f'Investment-{i} (Dominant / Existing Sectors)',
+            f'Investment-{i} (Emerging Sectors)', f'Investment-{i} (Approx. Investment ₹ Cr)',
+            f'Investment-{i} (Specific District)'
         ])
 
-    # ===== SECTORAL ANALYSIS HEADERS (D) =====
     sector_headers = []
     for i in range(1, max_sector_rows + 1):
         sector_headers.extend([
-            f'Sectoral-{i} (Sector Classification)',
-            f'Sectoral-{i} (Dominant / Existing Sectors)',
-            f'Sectoral-{i} (Emerging Sectors)',
+            f'Sectoral-{i} (Sector Classification)', f'Sectoral-{i} (Dominant / Existing Sectors)',
+            f'Sectoral-{i} (Emerging Sectors)'
         ])
 
-    # ===== OCCUPATIONAL CATEGORIES HEADERS (E.1) =====
     occ_headers = []
     for i in range(1, max_occ_rows + 1):
         occ_headers.extend([
-            f'Occupational-{i} (Category / Role)',
-            f'Occupational-{i} (Sector)',
-            f'Occupational-{i} (Minimum Qualification)',
-            f'Occupational-{i} (Est. Current Openings)',
-            f'Occupational-{i} (Projected Demand 12 Mo)',
-            f'Occupational-{i} (Indicative Wage ₹/Month)',
+            f'Occupational-{i} (Category / Role)', f'Occupational-{i} (Sector)',
+            f'Occupational-{i} (Minimum Qualification)', f'Occupational-{i} (Est. Current Openings)',
+            f'Occupational-{i} (Projected Demand 12 Mo)', f'Occupational-{i} (Indicative Wage ₹/Month)'
         ])
 
-    # ===== COMBINE ALL HEADERS =====
     all_headers = main_headers + inv_headers + sector_headers + occ_headers
     writer.writerow(all_headers)
 
-    # ===== HELPER: list -> comma string =====
     def list_to_str(val):
         if isinstance(val, list):
             return ', '.join(str(v) for v in val if v not in (None, ''))
         return str(val or '')
 
-    # ===== DATA ROWS =====
     for c in GovtConsultation.objects.all():
-
-        # ---- MAIN ROW ----
         row = [
-            c.consultation_id or '',
-            c.district_region or '',
-            c.mode or '',
-            c.mode_other or '',
+            c.consultation_id or '', c.district_region or '', c.mode or '', c.mode_other or '',
             c.consultation_date.strftime('%Y-%m-%d') if c.consultation_date else '',
-            c.surveyor_name or '',
-            list_to_str(ensure_list(c.office_visited)),
-            c.office_visited_other or '',
-            list_to_str(ensure_list(c.body_type)),
-            c.body_type_other or '',
-            list_to_str(ensure_list(c.jurisdiction)),
-            c.jurisdiction_other or '',
-            c.respondent_name or '',
-            c.respondent_mobile or '',
-            c.respondent_email or '',
-            c.office_address or '',
-            c.department_website or '',
-            c.nodal_officer_name or '',
-            c.nodal_officer_mobile or '',
-            c.nodal_officer_email or '',
-            c.upcoming_schemes or '',
-            c.emerging_technologies or '',
-            c.aware_establishments or '',
-            c.can_facilitate or '',
+            c.surveyor_name or '', list_to_str(ensure_list(c.office_visited)), c.office_visited_other or '',
+            list_to_str(ensure_list(c.body_type)), c.body_type_other or '',
+            list_to_str(ensure_list(c.jurisdiction)), c.jurisdiction_other or '',
+            c.respondent_name or '', c.respondent_mobile or '', c.respondent_email or '',
+            c.office_address or '', c.department_website or '', c.nodal_officer_name or '',
+            c.nodal_officer_mobile or '', c.nodal_officer_email or '', c.upcoming_schemes or '',
+            c.emerging_technologies or '', c.aware_establishments or '', c.can_facilitate or '',
             c.aware_establishments_count if c.aware_establishments_count is not None else '',
-            c.concentration_sectors or '',
-            c.known_employers or '',
-            list_to_str(ensure_list(c.facilitation_mode)),
-            list_to_str(ensure_list(c.recruitment_challenges)),
-            c.difficult_roles or '',
-            c.emerging_roles or '',
-            c.changing_competencies or '',
-            c.skill_gaps or '',
-            c.high_demand_districts or '',
-            c.unfilled_reasons or '',
-            c.operational_challenges or '',
-            c.facilitate_surveys or '',
-            c.share_registration_data or '',
-            c.participate_coordination or '',
-            c.share_demand_updates or '',
-            c.dept_nodal_officer_name or '',
-            c.dept_nodal_officer_mobile or '',
-            c.dept_nodal_officer_email or '',
-            list_to_str(ensure_list(c.supporting_evidence)),
-            c.demand_evidence_status or '',
+            c.concentration_sectors or '', c.known_employers or '',
+            list_to_str(ensure_list(c.facilitation_mode)), list_to_str(ensure_list(c.recruitment_challenges)),
+            c.difficult_roles or '', c.emerging_roles or '', c.changing_competencies or '',
+            c.skill_gaps or '', c.high_demand_districts or '', c.unfilled_reasons or '',
+            c.operational_challenges or '', c.facilitate_surveys or '', c.share_registration_data or '',
+            c.participate_coordination or '', c.share_demand_updates or '',
+            c.dept_nodal_officer_name or '', c.dept_nodal_officer_mobile or '', c.dept_nodal_officer_email or '',
+            list_to_str(ensure_list(c.supporting_evidence)), c.demand_evidence_status or '',
             c.submission_date.strftime('%Y-%m-%d') if c.submission_date else '',
-            c.place or '',
-            c.authorized_signature or '',
-            c.respondent_signature or '',
+            c.place or '', c.authorized_signature or '', c.respondent_signature or '',
             'Yes' if c.official_stamp else 'No',
             c.supporting_document.name if c.supporting_document else '',
-            c.total_investment_pipeline,
-            c.total_current_openings,
-            c.total_occupational_demand,
+            c.total_investment_pipeline, c.total_current_openings, c.total_occupational_demand,
             c.created_at.strftime('%Y-%m-%d %H:%M:%S'),
         ]
 
-        # ---- INVESTMENT PIPELINE ROWS ----
         inv_rows = ensure_list(c.investment_pipeline)
         for i in range(max_inv_rows):
             if i < len(inv_rows):
                 r = inv_rows[i] or {}
-                row.extend([
-                    r.get('sector_classification', '') or '',
-                    r.get('dominant_sectors', '') or '',
-                    r.get('emerging_sectors', '') or '',
-                    r.get('approx_investment', '') or '',
-                    r.get('specific_district', '') or '',
-                ])
+                row.extend([r.get('sector_classification', '') or '', r.get('dominant_sectors', '') or '', r.get('emerging_sectors', '') or '', r.get('approx_investment', '') or '', r.get('specific_district', '') or ''])
             else:
                 row.extend([''] * 5)
 
-        # ---- SECTORAL ANALYSIS ROWS ----
         sector_rows = ensure_list(c.sectoral_analysis)
         for i in range(max_sector_rows):
             if i < len(sector_rows):
                 r = sector_rows[i] or {}
-                row.extend([
-                    r.get('sector_classification', '') or '',
-                    r.get('dominant_sectors', '') or '',
-                    r.get('emerging_sectors', '') or '',
-                ])
+                row.extend([r.get('sector_classification', '') or '', r.get('dominant_sectors', '') or '', r.get('emerging_sectors', '') or ''])
             else:
                 row.extend([''] * 3)
 
-        # ---- OCCUPATIONAL CATEGORIES ROWS ----
         occ_rows = ensure_list(c.occupational_categories)
         for i in range(max_occ_rows):
             if i < len(occ_rows):
                 r = occ_rows[i] or {}
-                row.extend([
-                    r.get('category', '') or '',
-                    r.get('sector', '') or '',
-                    r.get('qualification', '') or '',
-                    r.get('current_openings', 0) if r.get('current_openings') is not None else 0,
-                    r.get('projected_demand', 0) if r.get('projected_demand') is not None else 0,
-                    r.get('wage_range', '') or '',
-                ])
+                row.extend([r.get('category', '') or '', r.get('sector', '') or '', r.get('qualification', '') or '', r.get('current_openings', 0) if r.get('current_openings') is not None else 0, r.get('projected_demand', 0) if r.get('projected_demand') is not None else 0, r.get('wage_range', '') or ''])
             else:
                 row.extend([''] * 6)
 
         writer.writerow(row)
-
     return response

@@ -10,7 +10,7 @@ urlpatterns = [
     # PUBLIC FORM VIEWS
     # ============================================
     path('survey/', views.survey_form, name='survey_form'),
-    path('api/submit/', views.submit_survey, name='submit_survey'),
+    path('api/submit-survey/', views.submit_survey, name='submit_survey'),
     
     # ============================================
     # ASSOCIATION FORM VIEWS

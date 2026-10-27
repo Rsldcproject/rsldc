@@ -307,7 +307,7 @@
             {% csrf_token %}
 
             <!-- ============================================================ -->
-            <!-- A. CONSULTATION CONTROL -->
+            <!-- A. CONSULTATION CONTROL (Required) -->
             <!-- ============================================================ -->
             <div class="form-section">
                 <div class="form-section-title">
@@ -349,7 +349,7 @@
             </div>
 
             <!-- ============================================================ -->
-            <!-- B. ASSOCIATION PROFILE -->
+            <!-- B. ASSOCIATION PROFILE (Required) -->
             <!-- ============================================================ -->
             <div class="form-section">
                 <div class="form-section-title">
@@ -455,7 +455,7 @@
             </div>
 
             <!-- ============================================================ -->
-            <!-- C. MEMBER AND SECTOR PROFILE -->
+            <!-- C. MEMBER AND SECTOR PROFILE (Optional) -->
             <!-- ============================================================ -->
             <div class="form-section">
                 <div class="form-section-title">
@@ -514,12 +514,11 @@
             </div>
 
             <!-- ============================================================ -->
-            <!-- D. JOB ROLE / OCCUPATIONAL DEMAND -->
+            <!-- D. JOB ROLE / OCCUPATIONAL DEMAND (Optional) -->
             <!-- ============================================================ -->
             <div class="form-section">
                 <div class="form-section-title">
                     <i class="fas fa-briefcase text-blue-600"></i> D. Sector and Cluster Demand
-                    <span class="badge">Add one or more</span>
                 </div>
                 <p class="text-sm text-gray-500 mb-3">
                     <i class="fas fa-info-circle"></i> Record demand only where the association has inputs from member employers.
@@ -535,7 +534,7 @@
             </div>
 
             <!-- ============================================================ -->
-            <!-- E. AGGREGATE APPRENTICESHIP / OJT POTENTIAL -->
+            <!-- E. AGGREGATE APPRENTICESHIP / OJT POTENTIAL (Optional) -->
             <!-- ============================================================ -->
             <div class="form-section">
                 <div class="form-section-title">
@@ -550,7 +549,7 @@
             </div>
 
             <!-- ============================================================ -->
-            <!-- F. SECTOR-LEVEL RECRUITMENT AND SKILL ISSUES -->
+            <!-- F. SECTOR-LEVEL RECRUITMENT AND SKILL ISSUES (Optional) -->
             <!-- ============================================================ -->
             <div class="form-section">
                 <div class="form-section-title">
@@ -603,7 +602,7 @@
             </div>
 
             <!-- ============================================================ -->
-            <!-- G. INDUSTRY-TRAINING PARTNERSHIP -->
+            <!-- G. INDUSTRY-TRAINING PARTNERSHIP (Optional) -->
             <!-- ============================================================ -->
             <div class="form-section">
                 <div class="form-section-title">
@@ -702,7 +701,7 @@
             </div>
 
             <!-- ============================================================ -->
-            <!-- H. VALIDATION AND RECOMMENDATIONS -->
+            <!-- H. VALIDATION AND RECOMMENDATIONS (Optional) -->
             <!-- ============================================================ -->
             <div class="form-section">
                 <div class="form-section-title">
@@ -762,7 +761,7 @@
             </div>
 
             <!-- ============================================================ -->
-            <!-- I. EVIDENCE AND SUBMISSION -->
+            <!-- I. EVIDENCE AND SUBMISSION (Optional) -->
             <!-- ============================================================ -->
             <div class="form-section">
                 <div class="form-section-title">
@@ -851,7 +850,7 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- JOB DEMAND TEMPLATE -->
+    <!-- JOB DEMAND TEMPLATE (Optional) -->
     <!-- ============================================================ -->
     <template id="jobDemandTemplate">
         <div class="job-demand-card">
@@ -865,8 +864,8 @@
             </div>
             <div class="grid-3">
                 <div>
-                    <label class="form-label text-xs text-gray-500">Job Role / Position Title <span class="required-star">*</span></label>
-                    <input type="text" class="form-control form-control-sm" name="job_role[]" placeholder="e.g. Welder, Software Engineer" required />
+                    <label class="form-label text-xs text-gray-500">Job Role / Position Title</label>
+                    <input type="text" class="form-control form-control-sm" name="job_role[]" placeholder="e.g. Welder, Software Engineer" />
                 </div>
                 <div>
                     <label class="form-label text-xs text-gray-500">Sector / Sub-sector</label>
@@ -1020,7 +1019,7 @@
     </template>
 
     <!-- ============================================================ -->
-    <!-- APPRENTICESHIP TEMPLATE -->
+    <!-- APPRENTICESHIP TEMPLATE (Optional) -->
     <!-- ============================================================ -->
     <template id="apprenticeshipTemplate">
         <div class="job-demand-card border-l-4 border-l-green-400">
@@ -1034,8 +1033,8 @@
             </div>
             <div class="grid-3">
                 <div>
-                    <label class="form-label text-xs text-gray-500">Priority Job Roles <span class="required-star">*</span></label>
-                    <input type="text" class="form-control form-control-sm" name="app_job_role[]" placeholder="e.g. Machinist, Developer" required />
+                    <label class="form-label text-xs text-gray-500">Priority Job Roles</label>
+                    <input type="text" class="form-control form-control-sm" name="app_job_role[]" placeholder="e.g. Machinist, Developer" />
                 </div>
                 <div>
                     <label class="form-label text-xs text-gray-500">Opportunity Type</label>
@@ -1334,7 +1333,7 @@
             const submitBtn = document.getElementById('submitBtn');
             const spinner = document.getElementById('submitSpinner');
 
-            // Validate required fields
+            // Validate required fields (Sirf Section A & B)
             const requiredFields = [
                 'consultationId', 'districtRegion', 'mode', 'consultationDate', 'surveyorName',
                 'associationName', 'associationType', 'primarySector', 'geographicCoverage',
@@ -1350,12 +1349,7 @@
                 }
             }
 
-            // Validate at least one job demand
-            const jobCards = document.querySelectorAll('#jobDemandsContainer .job-demand-card');
-            if (jobCards.length === 0) {
-                showToast('Please add at least one Job Role demand.', 'error');
-                return;
-            }
+            // Note: Job Role check removed so user can skip Section D & E entirely
 
             // Collect all form data
             const formData = new FormData(document.getElementById('associationForm'));

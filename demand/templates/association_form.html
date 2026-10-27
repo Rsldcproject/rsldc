@@ -842,7 +842,7 @@
                 </div>
                 <div>
                     <button type="submit" class="btn btn-success px-6" id="submitBtn">
-                        <i class="fas fa-paper-plane"></i> Submit Consultation
+                        <i class="fas fa-paper-plane"></i> <span id="submitBtnText">Submit Consultation</span>
                         <span id="submitSpinner" class="spinner hidden ml-2"></span>
                     </button>
                 </div>
@@ -1490,7 +1490,7 @@
             // Show loading
             submitBtn.disabled = true;
             spinner.classList.remove('hidden');
-            submitBtn.querySelector('span:not(.spinner)').textContent = 'Submitting...';
+            document.getElementById('submitBtnText').textContent = 'Submitting...';
 
             try {
                 const response = await fetch('/api/association/submit/', {
@@ -1506,7 +1506,7 @@
                 if (result.status === 'success') {
                     showToast('Consultation submitted successfully!', 'success');
                     setTimeout(() => {
-                        window.location.href = '/portal/dashboard/';
+                        window.location.href = '/association/';
                     }, 1500);
                 } else {
                     showToast(result.message || 'Submission failed. Please try again.', 'error');
@@ -1517,7 +1517,7 @@
             } finally {
                 submitBtn.disabled = false;
                 spinner.classList.add('hidden');
-                submitBtn.querySelector('span:not(.spinner)').textContent = 'Submit Consultation';
+                document.getElementById('submitBtnText').textContent = 'Submit Consultation';
             }
         }
 

@@ -18,6 +18,9 @@ from django.contrib import messages
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from .models import Survey, JobDemand, ApprenticeshipOJT, AssociationConsultation, AssociationJobRole, AssociationApprenticeship, GovtConsultation
+from django.db.models import Sum, F, Count, Value, OuterRef, Subquery
+from django.db.models.functions import Coalesce
+from django.utils.dateparse import parse_date
 
 logger = logging.getLogger(__name__)
 
@@ -218,175 +221,339 @@ def admin_login(request):
 
 @login_required
 def admin_dashboard(request):
+    district_filter = request.GET.get('district', '').strip()
+    block_filter    = request.GET.get('block', '').strip()
+    sector_filter   = request.GET.get('sector', '').strip()
+
+    # Defaults — agar koi section fail ho jaye to dashboard nahi tootega
+    context = {
+        'total_surveys': 0, 'total_jobs': 0, 'total_current': 0, 'total_future': 0,
+        'survey_count': 0, 'survey_current': 0, 'survey_future': 0,
+        'association_count': 0, 'association_jobs': 0,
+        'association_current': 0, 'association_future': 0,
+        'govt_count': 0, 'govt_current': 0, 'govt_future': 0, 'govt_investment': 0,
+        'latest_surveys': [], 'latest_associations': [], 'latest_govt': [],
+        'district_stats_json': '[]', 'block_stats_json': '[]',
+        'product_service_data_json': '[]', 'sector_data_json': '[]',
+        'source_breakdown_json': '[]',
+        'all_districts': [], 'all_blocks': [], 'all_sectors': [],
+        'selected_district': district_filter,
+        'selected_block': block_filter,
+        'selected_sector': sector_filter,
+    }
+
+    # ============================================================
+    # 1. SURVEY
+    # ============================================================
     try:
-        district_filter = request.GET.get('district', '')
-        block_filter = request.GET.get('block', '')
-        sector_filter = request.GET.get('sector', '')
-        
         survey_qs = Survey.objects.all()
         job_qs = JobDemand.objects.all()
-        
+
         if district_filter:
             survey_qs = survey_qs.filter(district=district_filter)
             job_qs = job_qs.filter(survey__district=district_filter)
-        
         if block_filter:
             survey_qs = survey_qs.filter(block=block_filter)
             job_qs = job_qs.filter(survey__block=block_filter)
-        
         if sector_filter:
             survey_qs = survey_qs.filter(operational_sector=sector_filter)
             job_qs = job_qs.filter(sector=sector_filter)
-        
-        total_surveys = survey_qs.count()
-        total_jobs = job_qs.count()
-        
-        total_current = job_qs.aggregate(total=Sum('current_openings'))['total'] or 0
-        total_future_6 = job_qs.aggregate(total=Sum('openings_6_months'))['total'] or 0
-        total_future_12 = job_qs.aggregate(total=Sum('openings_12_months'))['total'] or 0
-        total_future = total_future_6 + total_future_12
-        
-        # Latest 5 Surveys
-        latest_surveys = survey_qs.order_by('-created_at')[:5]
-        latest_surveys_data = []
-        for survey in latest_surveys:
-            latest_surveys_data.append({
-                'id': survey.id,
-                'employer_name': survey.company_name,
-                'district': survey.district,
-                'block': survey.block,
-                'primary_sector': survey.operational_sector,
-                'total_demand': survey.total_current_demand + survey.total_future_demand,
-                'created_at': survey.created_at.strftime('%d %b %Y, %I:%M %p')
+
+        survey_count = survey_qs.count()
+        total_jobs   = job_qs.count()
+
+        # ✅ FIXED: single Sum with F() + Coalesce (no Sum()+Sum())
+        s_agg = job_qs.aggregate(
+            cur=Coalesce(Sum('current_openings'), Value(0)),
+            f6 =Coalesce(Sum('openings_6_months'), Value(0)),
+            f12=Coalesce(Sum('openings_12_months'), Value(0)),
+        )
+        survey_current = s_agg['cur']
+        survey_future  = s_agg['f6'] + s_agg['f12']
+
+        # Latest 5 surveys — manual sum, properties pe bharosa nahi
+        latest_surveys = []
+        for s in survey_qs.prefetch_related('job_demands').order_by('-created_at')[:5]:
+            total_demand = sum(
+                (jd.current_openings or 0) + (jd.openings_6_months or 0) + (jd.openings_12_months or 0)
+                for jd in s.job_demands.all()
+            )
+            latest_surveys.append({
+                'id': s.id,
+                'employer_name': s.company_name,
+                'district': s.district,
+                'primary_sector': s.operational_sector,
+                'total_demand': total_demand,
+                'created_at': s.created_at.strftime('%d %b %Y, %I:%M %p') if s.created_at else '',
             })
-        
-        # District-wise Statistics
+
+        # District stats (Survey) ✅ FIXED
         district_stats = []
-        districts = survey_qs.values('district').annotate(
+        for d in survey_qs.values('district').annotate(
             count=Count('id'),
-            total_demand=Sum('job_demands__current_openings') + Sum('job_demands__openings_6_months') + Sum('job_demands__openings_12_months')
-        ).order_by('-total_demand')
-        
-        for d in districts:
+            demand=Coalesce(
+                Sum(F('job_demands__current_openings')
+                    + F('job_demands__openings_6_months')
+                    + F('job_demands__openings_12_months')),
+                Value(0)
+            )
+        ).order_by('-demand')[:10]:
             if d['district']:
                 district_stats.append({
                     'district': d['district'],
                     'count': d['count'],
-                    'total_demand': d['total_demand'] or 0
+                    'total_demand': d['demand'] or 0,
                 })
-        
-        # Block-wise Statistics
+
+        # Block stats ✅ FIXED
         block_stats = []
-        if district_filter:
-            blocks = survey_qs.filter(district=district_filter).values('block').annotate(
-                count=Count('id'),
-                total_demand=Sum('job_demands__current_openings') + Sum('job_demands__openings_6_months') + Sum('job_demands__openings_12_months')
-            ).order_by('-total_demand')
-        else:
-            blocks = survey_qs.values('block').annotate(
-                count=Count('id'),
-                total_demand=Sum('job_demands__current_openings') + Sum('job_demands__openings_6_months') + Sum('job_demands__openings_12_months')
-            ).order_by('-total_demand')[:10]
-        
-        for b in blocks:
+        for b in survey_qs.values('block').annotate(
+            count=Count('id'),
+            demand=Coalesce(
+                Sum(F('job_demands__current_openings')
+                    + F('job_demands__openings_6_months')
+                    + F('job_demands__openings_12_months')),
+                Value(0)
+            )
+        ).order_by('-demand')[:10]:
             if b['block']:
                 block_stats.append({
                     'block': b['block'],
                     'count': b['count'],
-                    'total_demand': b['total_demand'] or 0
+                    'total_demand': b['demand'] or 0,
                 })
-        
-        # Product/Service Type Statistics
-        product_service_stats = job_qs.values('survey__product_service').annotate(
+
+        # Product/service ✅ FIXED
+        ps_data = []
+        for ps in job_qs.values('survey__product_service').annotate(
             count=Count('id'),
-            total_current=Sum('current_openings'),
-            total_future=Sum('openings_6_months') + Sum('openings_12_months')
-        )
-        
-        product_service_data = []
-        for ps in product_service_stats:
+            cur=Coalesce(Sum('current_openings'), Value(0)),
+            fut=Coalesce(Sum(F('openings_6_months') + F('openings_12_months')), Value(0))
+        ):
             if ps['survey__product_service']:
-                product_service_data.append({
+                ps_data.append({
                     'type': ps['survey__product_service'],
                     'count': ps['count'],
-                    'total_current': ps['total_current'] or 0,
-                    'total_future': ps['total_future'] or 0
+                    'total_current': ps['cur'] or 0,
+                    'total_future': ps['fut'] or 0,
                 })
-        
-        # Sector-wise Demand
-        sector_stats = job_qs.values('sector').annotate(
-            count=Count('id'),
-            total_current=Sum('current_openings'),
-            total_future=Sum('openings_6_months') + Sum('openings_12_months')
-        ).order_by('-total_current')[:10]
-        
-        sector_data = []
-        for s in sector_stats:
+
+        # Survey sector (raw, will merge later) ✅ FIXED
+        survey_sector_raw = []
+        for s in job_qs.values('sector').annotate(
+            cur=Coalesce(Sum('current_openings'), Value(0)),
+            fut=Coalesce(Sum(F('openings_6_months') + F('openings_12_months')), Value(0))
+        ):
             if s['sector']:
-                sector_data.append({
+                survey_sector_raw.append({
                     'sector': s['sector'],
-                    'count': s['count'],
-                    'total_current': s['total_current'] or 0,
-                    'total_future': s['total_future'] or 0
+                    'current': s['cur'] or 0,
+                    'future': s['fut'] or 0,
                 })
-        
-        all_districts = Survey.objects.values_list('district', flat=True).distinct().order_by('district')
-        all_districts = [d for d in all_districts if d]
-        
-        all_blocks = Survey.objects.values_list('block', flat=True).distinct().order_by('block')
-        all_blocks = [b for b in all_blocks if b]
-        
-        all_sectors = JobDemand.objects.values_list('sector', flat=True).distinct().order_by('sector')
-        all_sectors = [s for s in all_sectors if s]
-        
-        # Monthly trend (MySQL Compatible Fix)
-        six_months_ago = datetime.now() - timedelta(days=180)
-        monthly_data = survey_qs.filter(created_at__gte=six_months_ago).annotate(
-            month_trunc=TruncMonth('created_at')
-        ).values('month_trunc').annotate(count=Count('id')).order_by('month_trunc')
-        
-        monthly_trend = [{'month': m['month_trunc'].strftime('%Y-%m'), 'count': m['count']} for m in monthly_data if m['month_trunc']]
-        
-        context = {
-            'total_surveys': total_surveys,
+
+        all_districts = [x for x in Survey.objects.values_list('district', flat=True).distinct().order_by('district') if x]
+        all_blocks    = [x for x in Survey.objects.values_list('block', flat=True).distinct().order_by('block') if x]
+        all_sectors   = [x for x in JobDemand.objects.values_list('sector', flat=True).distinct().order_by('sector') if x]
+
+        context.update({
+            'survey_count': survey_count,
             'total_jobs': total_jobs,
-            'total_current': total_current,
-            'total_future': total_future,
-            'latest_surveys': latest_surveys_data,
-            'district_stats': district_stats,
-            'block_stats': block_stats,
-            'product_service_data': product_service_data,
-            'sector_data': sector_data,
-            'monthly_trend': monthly_trend,
+            'survey_current': survey_current,
+            'survey_future': survey_future,
+            'latest_surveys': latest_surveys,
+            'district_stats_json': json.dumps(district_stats),
+            'block_stats_json': json.dumps(block_stats),
+            'product_service_data_json': json.dumps(ps_data),
             'all_districts': all_districts,
             'all_blocks': all_blocks,
             'all_sectors': all_sectors,
-            'selected_district': district_filter,
-            'selected_block': block_filter,
-            'selected_sector': sector_filter,
-        }
-        
-        return render(request, 'portal/dashboard.html', context)
-        
+            '_survey_sector_raw': survey_sector_raw,
+        })
     except Exception as e:
-        logger.error(f"Dashboard error: {str(e)}")
+        logger.error(f"Dashboard SURVEY error: {e}")
         traceback.print_exc()
-        context = {
-            'total_surveys': 0,
-            'total_jobs': 0,
-            'total_current': 0,
-            'total_future': 0,
-            'latest_surveys': [],
-            'district_stats': [],
-            'block_stats': [],
-            'product_service_data': [],
-            'sector_data': [],
-            'monthly_trend': [],
-            'all_districts': [],
-            'all_blocks': [],
-            'all_sectors': [],
-        }
-        return render(request, 'portal/dashboard.html', context)
+
+    # ============================================================
+    # 2. ASSOCIATION
+    # ============================================================
+    try:
+        assoc_qs = AssociationConsultation.objects.all()
+        if district_filter:
+            assoc_qs = assoc_qs.filter(district_region__icontains=district_filter)
+        if sector_filter:
+            assoc_qs = assoc_qs.filter(primary_sector__icontains=sector_filter)
+
+        assoc_count = assoc_qs.count()
+        assoc_jobs_qs = AssociationJobRole.objects.filter(consultation__in=assoc_qs)
+        association_jobs = assoc_jobs_qs.count()
+
+        a_agg = assoc_jobs_qs.aggregate(
+            cur=Coalesce(Sum('current_openings'), Value(0)),
+            f6 =Coalesce(Sum('openings_6_months'), Value(0)),
+            f12=Coalesce(Sum('openings_12_months'), Value(0)),
+        )
+        assoc_current = a_agg['cur']
+        assoc_future  = a_agg['f6'] + a_agg['f12']
+
+        latest_associations = []
+        for ac in assoc_qs.prefetch_related('job_roles').order_by('-created_at')[:5]:
+            total_demand = sum(
+                (jr.current_openings or 0) + (jr.openings_6_months or 0) + (jr.openings_12_months or 0)
+                for jr in ac.job_roles.all()
+            )
+            latest_associations.append({
+                'id': ac.id,
+                'consultation_id': ac.consultation_id or 'Draft',
+                'association_name': ac.association_name or 'N/A',
+                'district': ac.district_region or 'N/A',
+                'primary_sector': ac.primary_sector or 'N/A',
+                'total_demand': total_demand,
+                'created_at': ac.created_at.strftime('%d %b %Y, %I:%M %p') if ac.created_at else '',
+            })
+
+        assoc_sector_raw = []
+        for s in assoc_jobs_qs.values('sector').annotate(
+            cur=Coalesce(Sum('current_openings'), Value(0)),
+            fut=Coalesce(Sum(F('openings_6_months') + F('openings_12_months')), Value(0))
+        ):
+            if s['sector']:
+                assoc_sector_raw.append({
+                    'sector': s['sector'],
+                    'current': s['cur'] or 0,
+                    'future': s['fut'] or 0,
+                })
+
+        context.update({
+            'association_count': assoc_count,
+            'association_jobs': association_jobs,
+            'association_current': assoc_current,
+            'association_future': assoc_future,
+            'latest_associations': latest_associations,
+            '_assoc_sector_raw': assoc_sector_raw,
+        })
+    except Exception as e:
+        logger.error(f"Dashboard ASSOCIATION error: {e}")
+        traceback.print_exc()
+
+    # ============================================================
+    # 3. GOVERNMENT
+    # ============================================================
+    try:
+        govt_qs = GovtConsultation.objects.all()
+        if district_filter:
+            govt_qs = govt_qs.filter(district_region__icontains=district_filter)
+
+        govt_count = govt_qs.count()
+
+        def _sum_govt_json(g):
+            cur = fut = 0
+            inv_total = 0.0
+            try:
+                occ = g.occupational_categories or []
+                if isinstance(occ, str):
+                    occ = json.loads(occ)
+                for r in occ:
+                    try:
+                        cur += int(r.get('current_openings') or 0)
+                        fut += int(r.get('projected_demand') or 0)
+                    except (ValueError, TypeError):
+                        pass
+            except Exception:
+                pass
+            try:
+                inv = g.investment_pipeline or []
+                if isinstance(inv, str):
+                    inv = json.loads(inv)
+                for r in inv:
+                    try:
+                        inv_total += float(str(r.get('approx_investment') or 0).replace(',', ''))
+                    except (ValueError, TypeError):
+                        pass
+            except Exception:
+                pass
+            return cur, fut, inv_total
+
+        govt_current = govt_future = 0
+        govt_investment = 0.0
+        for g in govt_qs:
+            c, f, i = _sum_govt_json(g)
+            govt_current += c
+            govt_future  += f
+            govt_investment += i
+
+        latest_govt = []
+        for g in govt_qs.order_by('-created_at')[:5]:
+            c, f, _ = _sum_govt_json(g)
+            latest_govt.append({
+                'id': g.id,
+                'consultation_id': g.consultation_id or 'Draft',
+                'respondent_name': g.respondent_name or 'N/A',
+                'district': g.district_region or 'N/A',
+                'current': c,
+                'projected': f,
+                'created_at': g.created_at.strftime('%d %b %Y, %I:%M %p') if g.created_at else '',
+            })
+
+        context.update({
+            'govt_count': govt_count,
+            'govt_current': govt_current,
+            'govt_future': govt_future,
+            'govt_investment': int(govt_investment),
+            'latest_govt': latest_govt,
+        })
+    except Exception as e:
+        logger.error(f"Dashboard GOVT error: {e}")
+        traceback.print_exc()
+
+    # ============================================================
+    # 4. MERGE SECTOR (Survey + Association)
+    # ============================================================
+    try:
+        merged = {}
+        for s in context.get('_survey_sector_raw', []):
+            merged[s['sector']] = {'current': s['current'], 'future': s['future']}
+        for s in context.get('_assoc_sector_raw', []):
+            if s['sector'] in merged:
+                merged[s['sector']]['current'] += s['current']
+                merged[s['sector']]['future']  += s['future']
+            else:
+                merged[s['sector']] = {'current': s['current'], 'future': s['future']}
+
+        sector_data = [{'sector': k, 'current': v['current'], 'future': v['future']} for k, v in merged.items()]
+        sector_data.sort(key=lambda x: -(x['current'] + x['future']))
+        sector_data = sector_data[:10]
+
+        context['sector_data_json'] = json.dumps(sector_data)
+        context.pop('_survey_sector_raw', None)
+        context.pop('_assoc_sector_raw', None)
+    except Exception as e:
+        logger.error(f"Dashboard SECTOR MERGE error: {e}")
+        traceback.print_exc()
+
+    # ============================================================
+    # 5. COMBINED TOTALS + SOURCE BREAKDOWN
+    # ============================================================
+    context['total_surveys'] = (
+        context['survey_count'] + context['association_count'] + context['govt_count']
+    )
+    context['total_current'] = (
+        context['survey_current'] + context['association_current'] + context['govt_current']
+    )
+    context['total_future'] = (
+        context['survey_future'] + context['association_future'] + context['govt_future']
+    )
+
+    source_breakdown = [
+        {'source': 'Survey',      'count': context['survey_count'],
+         'current': context['survey_current'], 'future': context['survey_future']},
+        {'source': 'Association', 'count': context['association_count'],
+         'current': context['association_current'], 'future': context['association_future']},
+        {'source': 'Government',  'count': context['govt_count'],
+         'current': context['govt_current'], 'future': context['govt_future']},
+    ]
+    context['source_breakdown_json'] = json.dumps(source_breakdown)
+
+    return render(request, 'portal/dashboard.html', context)
 
 
 @login_required
@@ -1020,9 +1187,155 @@ def submit_association(request):
         }, status=500)
 
 
+def _to_int(value, default=None):
+    if value in (None, '', 'None'):
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _serialize_consultation(consultation):
+    """Detail + Edit view dono ke liye JSON-safe dict."""
+    job_roles = consultation.job_roles.all()
+    apprenticeships = consultation.apprenticeship_opportunities.all()
+    return {
+        'id': consultation.id,
+        'consultation_id': consultation.consultation_id or '',
+        'district_region': consultation.district_region,
+        'mode': consultation.mode,
+        'mode_other': consultation.mode_other or '',
+        'consultation_date': consultation.consultation_date.strftime('%Y-%m-%d') if consultation.consultation_date else '',
+        'surveyor_name': consultation.surveyor_name,
+        'association_name': consultation.association_name,
+        'association_type': consultation.association_type,
+        'association_type_other': consultation.association_type_other or '',
+        'primary_sector': consultation.primary_sector,
+        'geographic_coverage': consultation.geographic_coverage,
+        'geographic_specify': consultation.geographic_specify or '',
+        'year_established': consultation.year_established,
+        'total_members': consultation.total_members,
+        'active_members': consultation.active_members,
+        'comp_micro': consultation.comp_micro,
+        'comp_small': consultation.comp_small,
+        'comp_medium': consultation.comp_medium,
+        'comp_large': consultation.comp_large,
+        'key_clusters': consultation.key_clusters or '',
+        'respondent_name': consultation.respondent_name,
+        'respondent_mobile': consultation.respondent_mobile,
+        'respondent_email': consultation.respondent_email,
+        'major_products': consultation.major_products or '',
+        'estimated_workforce': consultation.estimated_workforce,
+        'business_trend': consultation.business_trend or '',
+        'growth_drivers': consultation.growth_drivers or '',
+        'upcoming_projects': consultation.upcoming_projects or '',
+        'peak_hiring': consultation.peak_hiring or '',
+        'member_employers_count': consultation.member_employers_count,
+        'member_list_attached': consultation.member_list_attached,
+        'recruitment_challenges': consultation.recruitment_challenges or [],
+        'difficult_roles': consultation.difficult_roles or '',
+        'emerging_roles': consultation.emerging_roles or '',
+        'changing_competencies': consultation.changing_competencies or '',
+        'skill_gaps': consultation.skill_gaps or '',
+        'high_demand_districts': consultation.high_demand_districts or '',
+        'unfilled_reasons': consultation.unfilled_reasons or '',
+        'mobilise_placements': consultation.mobilise_placements or '',
+        'support_apprenticeship': consultation.support_apprenticeship or '',
+        'support_guest_lectures': consultation.support_guest_lectures or '',
+        'facilitate_visits': consultation.facilitate_visits or '',
+        'demand_updates': consultation.demand_updates or '',
+        'nodal_officer_name': consultation.nodal_officer_name or '',
+        'nodal_officer_mobile': consultation.nodal_officer_mobile or '',
+        'nodal_officer_email': consultation.nodal_officer_email or '',
+        'survey_reviewed': consultation.survey_reviewed or '',
+        'alignment_view': consultation.alignment_view or '',
+        'priority_training': consultation.priority_training or '',
+        'curriculum_changes': consultation.curriculum_changes or '',
+        'placement_actions': consultation.placement_actions or '',
+        'policy_support': consultation.policy_support or '',
+        'additional_remarks': consultation.additional_remarks or '',
+        'supporting_evidence': consultation.supporting_evidence or '',
+        'demand_evidence_status': consultation.demand_evidence_status or '',
+        'respondent_signature': consultation.respondent_signature or '',
+        'facilitator_signature': consultation.facilitator_signature or '',
+        'submission_date': consultation.submission_date.strftime('%Y-%m-%d') if consultation.submission_date else '',
+        'supporting_document_url': consultation.supporting_document.url if consultation.supporting_document else '',
+        'created_at': consultation.created_at.strftime('%d %b %Y, %I:%M %p'),
+        'job_roles': [
+            {
+                'row_no': job.row_no,
+                'job_role': job.job_role,
+                'sector': job.sector or '',
+                'location': job.location or '',
+                'qualification': job.qualification or '',
+                'qualification_other': job.qualification_other or '',
+                'experience': job.experience or '',
+                'certification': job.certification,
+                'certification_detail': job.certification_detail or '',
+                'salary': job.salary or '',
+                'salary_period': job.salary_period or '',
+                'employment_type': job.employment_type or '',
+                'current_openings': job.current_openings,
+                'openings_6_months': job.openings_6_months,
+                'openings_12_months': job.openings_12_months,
+                'tech_skills': job.tech_skills or '',
+                'employability_skills': job.employability_skills or '',
+                'women_suitable': job.women_suitable,
+                'pwd': job.pwd,
+                'mobility': job.mobility or [],
+                'apprentice_seats': job.apprentice_seats,
+                'ojt_seats': job.ojt_seats,
+                'internship_seats': job.internship_seats,
+                'reporting_employers': job.reporting_employers,
+                'employer_list_attached': job.employer_list_attached,
+                'remarks': job.remarks or '',
+            }
+            for job in job_roles
+        ],
+        'apprenticeships': [
+            {
+                'row_no': app.row_no,
+                'job_role': app.job_role,
+                'opportunity_type': app.opportunity_type,
+                'employers_interested': app.employers_interested,
+                'seats': app.seats,
+                'duration': app.duration,
+                'stipend': app.stipend or '',
+                'start_period': app.start_period or '',
+                'conversion': app.conversion,
+                'employer_list': app.employer_list,
+            }
+            for app in apprenticeships
+        ],
+        'totals': {
+            'total_job_roles': job_roles.count(),
+            'total_apprenticeships': apprenticeships.count(),
+            'total_current_demand': consultation.total_current_demand,
+            'total_future_demand': consultation.total_future_demand,
+        },
+    }
+
+
 @login_required
 def admin_association_list(request):
-    consultations = AssociationConsultation.objects.all().prefetch_related('job_roles', 'apprenticeship_opportunities')
+    # Efficient aggregates via Subquery (avoids N+1 and join double-count)
+    jr_stats = AssociationJobRole.objects.filter(consultation=OuterRef('pk')).values('consultation').annotate(
+        cnt=Count('*'),
+        cur=Coalesce(Sum('current_openings'), Value(0)),
+        fut=Coalesce(Sum(F('openings_6_months') + F('openings_12_months')), Value(0)),
+    )
+    app_stats = AssociationApprenticeship.objects.filter(consultation=OuterRef('pk')).values('consultation').annotate(
+        cnt=Count('*'),
+    )
+
+    consultations = AssociationConsultation.objects.annotate(
+        job_role_count=Coalesce(Subquery(jr_stats.values('cnt')), Value(0)),
+        current_demand_sum=Coalesce(Subquery(jr_stats.values('cur')), Value(0)),
+        future_demand_sum=Coalesce(Subquery(jr_stats.values('fut')), Value(0)),
+        apprenticeship_count=Coalesce(Subquery(app_stats.values('cnt')), Value(0)),
+    ).prefetch_related('job_roles', 'apprenticeship_opportunities')
+
     context = {
         'consultations': consultations,
         'total_consultations': consultations.count(),
@@ -1035,125 +1348,10 @@ def admin_association_list(request):
 @login_required
 def get_association_detail(request, consultation_id):
     try:
-        consultation = AssociationConsultation.objects.get(id=consultation_id)
-        job_roles = consultation.job_roles.all()
-        apprenticeships = consultation.apprenticeship_opportunities.all()
-        
-        data = {
-            'id': consultation.id,
-            'consultation_id': consultation.consultation_id or '',
-            'district_region': consultation.district_region,
-            'mode': consultation.mode,
-            'mode_other': consultation.mode_other or '',
-            'consultation_date': consultation.consultation_date.strftime('%Y-%m-%d') if consultation.consultation_date else '',
-            'surveyor_name': consultation.surveyor_name,
-            'association_name': consultation.association_name,
-            'association_type': consultation.association_type,
-            'association_type_other': consultation.association_type_other or '',
-            'primary_sector': consultation.primary_sector,
-            'geographic_coverage': consultation.geographic_coverage,
-            'geographic_specify': consultation.geographic_specify or '',
-            'year_established': consultation.year_established,
-            'total_members': consultation.total_members,
-            'active_members': consultation.active_members,
-            'comp_micro': consultation.comp_micro,
-            'comp_small': consultation.comp_small,
-            'comp_medium': consultation.comp_medium,
-            'comp_large': consultation.comp_large,
-            'key_clusters': consultation.key_clusters or '',
-            'respondent_name': consultation.respondent_name,
-            'respondent_mobile': consultation.respondent_mobile,
-            'respondent_email': consultation.respondent_email,
-            'major_products': consultation.major_products or '',
-            'estimated_workforce': consultation.estimated_workforce,
-            'business_trend': consultation.business_trend or '',
-            'growth_drivers': consultation.growth_drivers or '',
-            'upcoming_projects': consultation.upcoming_projects or '',
-            'peak_hiring': consultation.peak_hiring or '',
-            'member_employers_count': consultation.member_employers_count,
-            'member_list_attached': consultation.member_list_attached,
-            'recruitment_challenges': consultation.recruitment_challenges or [],
-            'difficult_roles': consultation.difficult_roles or '',
-            'emerging_roles': consultation.emerging_roles or '',
-            'changing_competencies': consultation.changing_competencies or '',
-            'skill_gaps': consultation.skill_gaps or '',
-            'high_demand_districts': consultation.high_demand_districts or '',
-            'unfilled_reasons': consultation.unfilled_reasons or '',
-            'mobilise_placements': consultation.mobilise_placements or '',
-            'support_apprenticeship': consultation.support_apprenticeship or '',
-            'support_guest_lectures': consultation.support_guest_lectures or '',
-            'facilitate_visits': consultation.facilitate_visits or '',
-            'demand_updates': consultation.demand_updates or '',
-            'nodal_officer_name': consultation.nodal_officer_name or '',
-            'nodal_officer_mobile': consultation.nodal_officer_mobile or '',
-            'nodal_officer_email': consultation.nodal_officer_email or '',
-            'survey_reviewed': consultation.survey_reviewed or '',
-            'alignment_view': consultation.alignment_view or '',
-            'priority_training': consultation.priority_training or '',
-            'curriculum_changes': consultation.curriculum_changes or '',
-            'placement_actions': consultation.placement_actions or '',
-            'policy_support': consultation.policy_support or '',
-            'additional_remarks': consultation.additional_remarks or '',
-            'supporting_evidence': consultation.supporting_evidence or '',
-            'demand_evidence_status': consultation.demand_evidence_status or '',
-            'respondent_signature': consultation.respondent_signature or '',
-            'facilitator_signature': consultation.facilitator_signature or '',
-            'submission_date': consultation.submission_date.strftime('%Y-%m-%d') if consultation.submission_date else '',
-            'supporting_document_url': consultation.supporting_document.url if consultation.supporting_document else '',
-            'created_at': consultation.created_at.strftime('%d %b %Y, %I:%M %p'),
-            'job_roles': [
-                {
-                    'row_no': job.row_no,
-                    'job_role': job.job_role,
-                    'sector': job.sector or '',
-                    'location': job.location or '',
-                    'qualification': job.qualification or '',
-                    'qualification_other': job.qualification_other or '',
-                    'experience': job.experience or '',
-                    'certification': job.certification,
-                    'certification_detail': job.certification_detail or '',
-                    'salary': job.salary or '',
-                    'salary_period': job.salary_period or '',
-                    'employment_type': job.employment_type or '',
-                    'current_openings': job.current_openings,
-                    'openings_6_months': job.openings_6_months,
-                    'openings_12_months': job.openings_12_months,
-                    'tech_skills': job.tech_skills or '',
-                    'employability_skills': job.employability_skills or '',
-                    'women_suitable': job.women_suitable,
-                    'pwd': job.pwd,
-                    'mobility': job.mobility or [],
-                    'apprentice_seats': job.apprentice_seats,
-                    'ojt_seats': job.ojt_seats,
-                    'internship_seats': job.internship_seats,
-                    'reporting_employers': job.reporting_employers,
-                    'employer_list_attached': job.employer_list_attached,
-                    'remarks': job.remarks or ''
-                }
-                for job in job_roles
-            ],
-            'apprenticeships': [
-                {
-                    'row_no': app.row_no,
-                    'job_role': app.job_role,
-                    'opportunity_type': app.opportunity_type,
-                    'employers_interested': app.employers_interested,
-                    'seats': app.seats,
-                    'duration': app.duration,
-                    'stipend': app.stipend or '',
-                    'start_period': app.start_period or '',
-                    'conversion': app.conversion,
-                    'employer_list': app.employer_list
-                }
-                for app in apprenticeships
-            ],
-            'totals': {
-                'total_job_roles': job_roles.count(),
-                'total_apprenticeships': apprenticeships.count(),
-                'total_current_demand': consultation.total_current_demand,
-                'total_future_demand': consultation.total_future_demand,
-            }
-        }
+        consultation = AssociationConsultation.objects.prefetch_related(
+            'job_roles', 'apprenticeship_opportunities'
+        ).get(id=consultation_id)
+        data = _serialize_consultation(consultation)
         return JsonResponse({'status': 'success', 'data': data})
     except AssociationConsultation.DoesNotExist:
         return JsonResponse({'status': 'error', 'message': 'Consultation not found'}, status=404)
@@ -1162,15 +1360,206 @@ def get_association_detail(request, consultation_id):
 
 
 @login_required
-@csrf_exempt
+def admin_association_edit(request, consultation_id):
+    """Admin-only edit page — renders the public form template in edit mode."""
+    try:
+        consultation = AssociationConsultation.objects.prefetch_related(
+            'job_roles', 'apprenticeship_opportunities'
+        ).get(id=consultation_id)
+    except AssociationConsultation.DoesNotExist:
+        messages.error(request, 'Consultation not found.')
+        return redirect('survey:admin_association_list')
+
+    data = _serialize_consultation(consultation)
+    context = {
+        'edit_mode': True,
+        'consultation_id': consultation.id,
+        'consultation_data_json': json.dumps(data),
+    }
+    # 👇 path fix — existing public template use karo
+    return render(request, 'association_form.html', context)
+
+
+@login_required
+def admin_association_update(request, consultation_id):
+    """Update an existing consultation — keeps the same ID / consultation_id."""
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
+
+    try:
+        consultation = AssociationConsultation.objects.get(id=consultation_id)
+    except AssociationConsultation.DoesNotExist:
+        return JsonResponse({'status': 'error', 'message': 'Consultation not found'}, status=404)
+
+    try:
+        with transaction.atomic():
+            d = request.POST
+
+            # ---- Section A ----
+            new_cid = (d.get('consultation_id') or '').strip()
+            if new_cid:
+                consultation.consultation_id = new_cid
+            consultation.district_region = d.get('district_region', consultation.district_region)
+            consultation.mode = d.get('mode', consultation.mode)
+            consultation.mode_other = d.get('mode_other', '')
+            if d.get('consultation_date'):
+                parsed = parse_date(d.get('consultation_date'))
+                if parsed:
+                    consultation.consultation_date = parsed
+            consultation.surveyor_name = d.get('surveyor_name', consultation.surveyor_name)
+
+            # ---- Section B ----
+            consultation.association_name = d.get('association_name', consultation.association_name)
+            consultation.association_type = d.get('association_type', consultation.association_type)
+            consultation.association_type_other = d.get('association_type_other', '')
+            consultation.primary_sector = d.get('primary_sector', consultation.primary_sector)
+            consultation.geographic_coverage = d.get('geographic_coverage', consultation.geographic_coverage)
+            consultation.geographic_specify = d.get('geographic_specify', '')
+            consultation.year_established = _to_int(d.get('year_established'))
+            consultation.total_members = _to_int(d.get('total_members'))
+            consultation.active_members = _to_int(d.get('active_members'))
+            consultation.key_clusters = d.get('key_clusters', '')
+            consultation.comp_micro = _to_int(d.get('comp_micro'))
+            consultation.comp_small = _to_int(d.get('comp_small'))
+            consultation.comp_medium = _to_int(d.get('comp_medium'))
+            consultation.comp_large = _to_int(d.get('comp_large'))
+            consultation.respondent_name = d.get('respondent_name', consultation.respondent_name)
+            consultation.respondent_mobile = d.get('respondent_mobile', consultation.respondent_mobile)
+            consultation.respondent_email = d.get('respondent_email', consultation.respondent_email)
+
+            # ---- Section C ----
+            consultation.major_products = d.get('major_products', '')
+            consultation.estimated_workforce = _to_int(d.get('estimated_workforce'))
+            consultation.business_trend = d.get('business_trend', '')
+            consultation.growth_drivers = d.get('growth_drivers', '')
+            consultation.upcoming_projects = d.get('upcoming_projects', '')
+            consultation.peak_hiring = d.get('peak_hiring', '')
+            consultation.member_employers_count = _to_int(d.get('member_employers_count'))
+            consultation.member_list_attached = bool(d.get('member_list_attached'))
+
+            # ---- Section F ----
+            try:
+                consultation.recruitment_challenges = json.loads(d.get('recruitment_challenges', '[]'))
+            except (json.JSONDecodeError, TypeError):
+                consultation.recruitment_challenges = []
+            consultation.difficult_roles = d.get('difficult_roles', '')
+            consultation.emerging_roles = d.get('emerging_roles', '')
+            consultation.changing_competencies = d.get('changing_competencies', '')
+            consultation.skill_gaps = d.get('skill_gaps', '')
+            consultation.high_demand_districts = d.get('high_demand_districts', '')
+            consultation.unfilled_reasons = d.get('unfilled_reasons', '')
+
+            # ---- Section G ----
+            consultation.mobilise_placements = d.get('mobilise_placements', '')
+            consultation.support_apprenticeship = d.get('support_apprenticeship', '')
+            consultation.support_guest_lectures = d.get('support_guest_lectures', '')
+            consultation.facilitate_visits = d.get('facilitate_visits', '')
+            consultation.demand_updates = d.get('demand_updates', '')
+            consultation.nodal_officer_name = d.get('nodal_officer_name', '')
+            consultation.nodal_officer_mobile = d.get('nodal_officer_mobile', '')
+            consultation.nodal_officer_email = d.get('nodal_officer_email', '')
+
+            # ---- Section H ----
+            consultation.survey_reviewed = d.get('survey_reviewed', '')
+            consultation.alignment_view = d.get('alignment_view', '')
+            consultation.priority_training = d.get('priority_training', '')
+            consultation.curriculum_changes = d.get('curriculum_changes', '')
+            consultation.placement_actions = d.get('placement_actions', '')
+            consultation.policy_support = d.get('policy_support', '')
+            consultation.additional_remarks = d.get('additional_remarks', '')
+
+            # ---- Section I ----
+            consultation.supporting_evidence = d.get('supporting_evidence', '')
+            consultation.demand_evidence_status = d.get('demand_evidence_status', '')
+            consultation.respondent_signature = d.get('respondent_signature', '')
+            consultation.facilitator_signature = d.get('facilitator_signature', '')
+            if d.get('submission_date'):
+                parsed = parse_date(d.get('submission_date'))
+                if parsed:
+                    consultation.submission_date = parsed
+
+            if 'supporting_document' in request.FILES:
+                new_file = request.FILES['supporting_document']
+                if new_file and new_file.size > 0:
+                    if consultation.supporting_document and default_storage.exists(consultation.supporting_document.name):
+                        default_storage.delete(consultation.supporting_document.name)
+                    consultation.supporting_document = new_file
+
+            consultation.save()
+
+            # ---- Replace job roles ----
+            consultation.job_roles.all().delete()
+            try:
+                job_demands = json.loads(d.get('job_demands', '[]'))
+            except (json.JSONDecodeError, TypeError):
+                job_demands = []
+
+            for idx, jd in enumerate(job_demands, start=1):
+                AssociationJobRole.objects.create(
+                    consultation=consultation,
+                    row_no=idx,
+                    job_role=jd.get('job_role', ''),
+                    sector=jd.get('sector', ''),
+                    location=jd.get('location', ''),
+                    qualification=jd.get('qualification', ''),
+                    qualification_other=jd.get('qualification_other', ''),
+                    experience=jd.get('experience', ''),
+                    certification=jd.get('certification', 'No'),
+                    certification_detail=jd.get('certification_detail', ''),
+                    salary=jd.get('salary', ''),
+                    salary_period=jd.get('salary_period', ''),
+                    employment_type=jd.get('employment_type', ''),
+                    current_openings=_to_int(jd.get('current_openings'), 0),
+                    openings_6_months=_to_int(jd.get('openings_6_months'), 0),
+                    openings_12_months=_to_int(jd.get('openings_12_months'), 0),
+                    tech_skills=jd.get('tech_skills', ''),
+                    employability_skills=jd.get('employability_skills', ''),
+                    women_suitable=jd.get('women_suitable', ''),
+                    pwd=jd.get('pwd', ''),
+                    mobility=jd.get('mobility', []),
+                    apprentice_seats=_to_int(jd.get('apprentice_seats'), 0),
+                    ojt_seats=_to_int(jd.get('ojt_seats'), 0),
+                    internship_seats=_to_int(jd.get('internship_seats'), 0),
+                    reporting_employers=_to_int(jd.get('reporting_employers'), 0),
+                    employer_list_attached=bool(jd.get('employer_list_attached')),
+                    remarks=jd.get('remarks', ''),
+                )
+
+            # ---- Replace apprenticeships ----
+            consultation.apprenticeship_opportunities.all().delete()
+            try:
+                apprenticeships = json.loads(d.get('apprenticeships', '[]'))
+            except (json.JSONDecodeError, TypeError):
+                apprenticeships = []
+
+            for idx, app in enumerate(apprenticeships, start=1):
+                AssociationApprenticeship.objects.create(
+                    consultation=consultation,
+                    row_no=idx,
+                    job_role=app.get('job_role', ''),
+                    opportunity_type=app.get('opportunity_type', ''),
+                    employers_interested=_to_int(app.get('employers_interested'), 0),
+                    seats=_to_int(app.get('seats'), 0),
+                    duration=_to_int(app.get('duration'), 0),
+                    stipend=app.get('stipend', ''),
+                    start_period=app.get('start_period', ''),
+                    conversion=app.get('conversion', ''),
+                    employer_list=app.get('employer_list', ''),
+                )
+
+        return JsonResponse({'status': 'success', 'message': 'Consultation updated successfully'})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+
+@login_required
 def delete_association(request, consultation_id):
     if request.method != 'DELETE':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
     try:
         consultation = AssociationConsultation.objects.get(id=consultation_id)
-        if consultation.supporting_document:
-            if default_storage.exists(consultation.supporting_document.name):
-                default_storage.delete(consultation.supporting_document.name)
+        if consultation.supporting_document and default_storage.exists(consultation.supporting_document.name):
+            default_storage.delete(consultation.supporting_document.name)
         consultation.delete()
         return JsonResponse({'status': 'success', 'message': 'Consultation deleted successfully'})
     except AssociationConsultation.DoesNotExist:
@@ -1184,37 +1573,24 @@ def admin_export_association_csv(request):
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="association_consultations_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv"'
     writer = csv.writer(response)
-    
-    headers = [
+    writer.writerow([
         'Consultation ID', 'Date', 'Association Name', 'Association Type', 'Primary Sector',
         'District/Region', 'Surveyor Name', 'Respondent Name', 'Respondent Mobile',
         'Total Members', 'Active Members', 'Business Trend', 'Total Job Roles',
         'Total Current Demand', 'Total Future Demand', 'Total Apprenticeships',
         'Created At'
-    ]
-    writer.writerow(headers)
-    
-    for consultation in AssociationConsultation.objects.all():
+    ])
+    for c in AssociationConsultation.objects.all():
         writer.writerow([
-            consultation.consultation_id or '',
-            consultation.consultation_date.strftime('%Y-%m-%d') if consultation.consultation_date else '',
-            consultation.association_name,
-            consultation.association_type,
-            consultation.primary_sector,
-            consultation.district_region,
-            consultation.surveyor_name,
-            consultation.respondent_name,
-            consultation.respondent_mobile,
-            consultation.total_members or 0,
-            consultation.active_members or 0,
-            consultation.business_trend or '',
-            consultation.total_job_roles,
-            consultation.total_current_demand,
-            consultation.total_future_demand,
-            consultation.total_apprenticeships,
-            consultation.created_at.strftime('%Y-%m-%d %H:%M:%S')
+            c.consultation_id or '',
+            c.consultation_date.strftime('%Y-%m-%d') if c.consultation_date else '',
+            c.association_name, c.association_type, c.primary_sector, c.district_region,
+            c.surveyor_name, c.respondent_name, c.respondent_mobile,
+            c.total_members or 0, c.active_members or 0, c.business_trend or '',
+            c.total_job_roles, c.total_current_demand, c.total_future_demand,
+            c.total_apprenticeships,
+            c.created_at.strftime('%Y-%m-%d %H:%M:%S'),
         ])
-    
     return response
 
 
@@ -1402,6 +1778,75 @@ def submit_govt(request):
         traceback.print_exc()
         return JsonResponse({'status': 'error', 'message': f'{type(e).__name__}: {str(e)}'}, status=500)
 
+def _serialize_govt(consultation):
+    """Serialize GovtConsultation for edit-form prefill."""
+    def ensure_list(val):
+        if isinstance(val, list):
+            return val
+        if isinstance(val, str):
+            try:
+                return json.loads(val)
+            except Exception:
+                return []
+        return []
+
+    return {
+        'id': consultation.id,
+        'consultation_id': consultation.consultation_id or '',
+        'district_region': consultation.district_region or '',
+        'mode': consultation.mode or '',
+        'mode_other': consultation.mode_other or '',
+        'consultation_date': consultation.consultation_date.strftime('%Y-%m-%d') if consultation.consultation_date else '',
+        'surveyor_name': consultation.surveyor_name or '',
+        'office_visited': ensure_list(consultation.office_visited),
+        'office_visited_other': consultation.office_visited_other or '',
+        'body_type': ensure_list(consultation.body_type),
+        'body_type_other': consultation.body_type_other or '',
+        'jurisdiction': ensure_list(consultation.jurisdiction),
+        'jurisdiction_other': consultation.jurisdiction_other or '',
+        'respondent_name': consultation.respondent_name or '',
+        'respondent_mobile': consultation.respondent_mobile or '',
+        'respondent_email': consultation.respondent_email or '',
+        'office_address': consultation.office_address or '',
+        'department_website': consultation.department_website or '',
+        'nodal_officer_name': consultation.nodal_officer_name or '',
+        'nodal_officer_mobile': consultation.nodal_officer_mobile or '',
+        'nodal_officer_email': consultation.nodal_officer_email or '',
+        'investment_pipeline': ensure_list(consultation.investment_pipeline),
+        'sectoral_analysis': ensure_list(consultation.sectoral_analysis),
+        'occupational_categories': ensure_list(consultation.occupational_categories),
+        'upcoming_schemes': consultation.upcoming_schemes or '',
+        'emerging_technologies': consultation.emerging_technologies or '',
+        'aware_establishments': consultation.aware_establishments or '',
+        'can_facilitate': consultation.can_facilitate or '',
+        'aware_establishments_count': consultation.aware_establishments_count,
+        'concentration_sectors': consultation.concentration_sectors or '',
+        'known_employers': consultation.known_employers or '',
+        'facilitation_mode': ensure_list(consultation.facilitation_mode),
+        'recruitment_challenges': ensure_list(consultation.recruitment_challenges),
+        'difficult_roles': consultation.difficult_roles or '',
+        'emerging_roles': consultation.emerging_roles or '',
+        'changing_competencies': consultation.changing_competencies or '',
+        'skill_gaps': consultation.skill_gaps or '',
+        'high_demand_districts': consultation.high_demand_districts or '',
+        'unfilled_reasons': consultation.unfilled_reasons or '',
+        'operational_challenges': consultation.operational_challenges or '',
+        'facilitate_surveys': consultation.facilitate_surveys or '',
+        'share_registration_data': consultation.share_registration_data or '',
+        'participate_coordination': consultation.participate_coordination or '',
+        'share_demand_updates': consultation.share_demand_updates or '',
+        'dept_nodal_officer_name': consultation.dept_nodal_officer_name or '',
+        'dept_nodal_officer_mobile': consultation.dept_nodal_officer_mobile or '',
+        'dept_nodal_officer_email': consultation.dept_nodal_officer_email or '',
+        'supporting_evidence': ensure_list(consultation.supporting_evidence),
+        'demand_evidence_status': consultation.demand_evidence_status or '',
+        'submission_date': consultation.submission_date.strftime('%Y-%m-%d') if consultation.submission_date else '',
+        'place': consultation.place or '',
+        'authorized_signature': consultation.authorized_signature or '',
+        'respondent_signature': consultation.respondent_signature or '',
+        'official_stamp': consultation.official_stamp,
+        'supporting_document_url': consultation.supporting_document.url if consultation.supporting_document else '',
+    }
 
 @login_required
 def admin_govt_list(request):
@@ -1500,9 +1945,155 @@ def get_govt_detail(request, consultation_id):
     except Exception as e:
         return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
 
+@login_required
+def admin_govt_edit(request, consultation_id):
+    """Render govt_form.html pre-filled with existing consultation data."""
+    try:
+        consultation = GovtConsultation.objects.get(id=consultation_id)
+    except GovtConsultation.DoesNotExist:
+        messages.error(request, 'Consultation not found.')
+        return redirect('survey:admin_govt_list')
+
+    data = _serialize_govt(consultation)
+    context = {
+        'edit_mode': True,
+        'consultation_id': consultation.id,
+        'consultation_data_json': json.dumps(data),
+    }
+    return render(request, 'govt_form.html', context)
+
 
 @login_required
-@csrf_exempt
+def admin_govt_update(request, consultation_id):
+    """Update existing govt consultation — same ID retained."""
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
+
+    try:
+        consultation = GovtConsultation.objects.get(id=consultation_id)
+    except GovtConsultation.DoesNotExist:
+        return JsonResponse({'status': 'error', 'message': 'Consultation not found'}, status=404)
+
+    try:
+        data = request.POST.dict()
+        files = request.FILES
+
+        def parse_json_field(field_name, default=None):
+            if default is None:
+                default = []
+            val = data.get(field_name, default)
+            if isinstance(val, str):
+                try:
+                    return json.loads(val)
+                except Exception:
+                    return default
+            return val if val is not None else default
+
+        # ---- Dates ----
+        if data.get('consultation_date'):
+            try:
+                consultation.consultation_date = datetime.strptime(
+                    data.get('consultation_date'), '%Y-%m-%d').date()
+            except ValueError:
+                pass
+        if data.get('submission_date'):
+            try:
+                consultation.submission_date = datetime.strptime(
+                    data.get('submission_date'), '%Y-%m-%d').date()
+            except ValueError:
+                pass
+
+        # ---- Section A ----
+        if data.get('consultation_id', '').strip():
+            consultation.consultation_id = data.get('consultation_id').strip()
+        consultation.district_region = data.get('district_region', consultation.district_region)
+        consultation.mode = data.get('mode', consultation.mode)
+        consultation.mode_other = data.get('mode_other', '')
+        consultation.surveyor_name = data.get('surveyor_name', consultation.surveyor_name)
+        consultation.office_visited = parse_json_field('office_visited')
+        consultation.office_visited_other = data.get('office_visited_other', '')
+
+        # ---- Section B ----
+        consultation.body_type = parse_json_field('body_type')
+        consultation.body_type_other = data.get('body_type_other', '')
+        consultation.jurisdiction = parse_json_field('jurisdiction')
+        consultation.jurisdiction_other = data.get('jurisdiction_other', '')
+        consultation.respondent_name = data.get('respondent_name', consultation.respondent_name)
+        consultation.respondent_mobile = data.get('respondent_mobile', consultation.respondent_mobile)
+        consultation.respondent_email = data.get('respondent_email', consultation.respondent_email)
+        consultation.office_address = data.get('office_address', '')
+        consultation.department_website = data.get('department_website', '')
+        consultation.nodal_officer_name = data.get('nodal_officer_name', '')
+        consultation.nodal_officer_mobile = data.get('nodal_officer_mobile', '')
+        consultation.nodal_officer_email = data.get('nodal_officer_email', '')
+
+        # ---- Section C / D ----
+        consultation.investment_pipeline = parse_json_field('investment_pipeline')
+        consultation.sectoral_analysis = parse_json_field('sectoral_analysis')
+
+        # ---- Section E ----
+        consultation.occupational_categories = parse_json_field('occupational_categories')
+        consultation.upcoming_schemes = data.get('upcoming_schemes', '')
+        consultation.emerging_technologies = data.get('emerging_technologies', '')
+        consultation.aware_establishments = data.get('aware_establishments', '')
+        consultation.can_facilitate = data.get('can_facilitate', '')
+        aware_count = data.get('aware_establishments_count', '').strip()
+        try:
+            consultation.aware_establishments_count = int(aware_count) if aware_count else None
+        except (ValueError, TypeError):
+            consultation.aware_establishments_count = None
+        consultation.concentration_sectors = data.get('concentration_sectors', '')
+        consultation.known_employers = data.get('known_employers', '')
+        consultation.facilitation_mode = parse_json_field('facilitation_mode')
+
+        # ---- Section F ----
+        consultation.recruitment_challenges = parse_json_field('recruitment_challenges')
+        consultation.difficult_roles = data.get('difficult_roles', '')
+        consultation.emerging_roles = data.get('emerging_roles', '')
+        consultation.changing_competencies = data.get('changing_competencies', '')
+        consultation.skill_gaps = data.get('skill_gaps', '')
+        consultation.high_demand_districts = data.get('high_demand_districts', '')
+        consultation.unfilled_reasons = data.get('unfilled_reasons', '')
+        consultation.operational_challenges = data.get('operational_challenges', '')
+
+        # ---- Section G ----
+        consultation.facilitate_surveys = data.get('facilitate_surveys', '')
+        consultation.share_registration_data = data.get('share_registration_data', '')
+        consultation.participate_coordination = data.get('participate_coordination', '')
+        consultation.share_demand_updates = data.get('share_demand_updates', '')
+        consultation.dept_nodal_officer_name = data.get('dept_nodal_officer_name', '')
+        consultation.dept_nodal_officer_mobile = data.get('dept_nodal_officer_mobile', '')
+        consultation.dept_nodal_officer_email = data.get('dept_nodal_officer_email', '')
+
+        # ---- Section H ----
+        consultation.supporting_evidence = parse_json_field('supporting_evidence')
+        consultation.demand_evidence_status = data.get('demand_evidence_status', '')
+        consultation.place = data.get('place', '')
+        consultation.authorized_signature = data.get('authorized_signature', '')
+        consultation.respondent_signature = data.get('respondent_signature', '')
+        consultation.official_stamp = (
+            str(data.get('official_stamp', '')).lower() in ['true', 'on', '1', 'yes']
+        )
+
+        # ---- New file (only replace if user uploaded) ----
+        if 'supporting_document' in files:
+            uploaded_file = files['supporting_document']
+            if uploaded_file.size > 50 * 1024:
+                return JsonResponse({'status': 'error', 'message': 'File size exceeds 50KB limit.'}, status=400)
+            if consultation.supporting_document and default_storage.exists(consultation.supporting_document.name):
+                default_storage.delete(consultation.supporting_document.name)
+            file_name = f"govt_{consultation.id}_{uploaded_file.name}"
+            consultation.supporting_document = default_storage.save(
+                os.path.join('govt_documents', file_name),
+                ContentFile(uploaded_file.read())
+            )
+
+        consultation.save()
+        return JsonResponse({'status': 'success', 'message': 'Government consultation updated successfully'})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': f'{type(e).__name__}: {str(e)}'}, status=500)
+
+@login_required
 def delete_govt(request, consultation_id):
     if request.method != 'DELETE':
         return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)

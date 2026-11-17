@@ -1,12 +1,10 @@
 from django.db import models
-
 from django.core.validators import MinValueValidator, RegexValidator, FileExtensionValidator
-
 from django.utils import timezone
-
 import re
-
+from django.db.models import Sum, F
 import os
+
 
 
 class Survey(models.Model):
@@ -707,16 +705,10 @@ class AssociationConsultation(models.Model):
           @property
 
           def total_future_demand(self):
-
-                    return self.job_roles.aggregate(
-
-                              models.Sum('openings_6_months') + models.Sum('openings_12_months')
-
-                    )['openings_6_months__sum'] or 0 + self.job_roles.aggregate(
-
-                              models.Sum('openings_12_months')
-
-                    )['openings_12_months__sum'] or 0
+            result = self.job_roles.aggregate(
+                total=Sum(F('openings_6_months') + F('openings_12_months'))   # ✅ single Sum + F() + alias
+            )
+            return result['total'] or 0
 
 
 class AssociationJobRole(models.Model):

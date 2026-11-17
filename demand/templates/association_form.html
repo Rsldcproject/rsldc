@@ -281,9 +281,77 @@
             align-items: center;
             gap: 0.3rem;
         }
+        /* ===== Admin Edit Mode Banner ===== */
+        .edit-mode-banner {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: linear-gradient(90deg, #1e293b, #334155);
+            color: #fff;
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .edit-mode-banner .banner-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .edit-mode-banner .banner-left i {
+            color: #60a5fa;
+            font-size: 1.1rem;
+        }
+        .edit-mode-banner .banner-left code {
+            background: rgba(255,255,255,0.15);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #fbbf24;
+        }
+        .edit-mode-banner a {
+            color: #93c5fd;
+            text-decoration: none;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 6px;
+            background: rgba(255,255,255,0.08);
+            transition: all 0.2s;
+        }
+        .edit-mode-banner a:hover {
+            background: rgba(255,255,255,0.18);
+            color: #fff;
+        }
     </style>
+    {% if edit_mode %}
+    <script>
+        window.EDIT_MODE = true;
+        window.EDIT_ID = {{ consultation_id }};
+        window.CONSULTATION_DATA = {{ consultation_data_json|safe }};
+    </script>
+    {% endif %}
 </head>
 <body>
+
+    {% if edit_mode %}
+    <div class="edit-mode-banner">
+        <div class="banner-left">
+            <i class="fas fa-shield-alt"></i>
+            <strong>Admin Edit Mode</strong>
+            <span>— Editing Consultation <code>#{{ consultation_id }}</code></span>
+        </div>
+        <a href="{% url 'survey:admin_association_list' %}">
+            <i class="fas fa-arrow-left"></i> Back to Admin List
+        </a>
+    </div>
+    {% endif %}
 
     <!-- Toast Notification -->
     <div id="toast" class="toast"></div>
@@ -1107,26 +1175,27 @@
         // DOM READY
         // ============================================================
         document.addEventListener('DOMContentLoaded', function() {
-            // Set default date
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('consultationDate').value = today;
             document.getElementById('submissionDate').value = today;
 
-            // Add first job demand and apprenticeship
             addJobDemand();
             addApprenticeship();
-
-            // Timer
             setInterval(updateTimer, 1000);
-
-            // File upload handling
             setupFileUpload();
-
-            // Setup other-toggle for all existing selects
             setupOtherToggles();
 
-            // Form submit
             document.getElementById('associationForm').addEventListener('submit', handleSubmit);
+
+            // ---- EDIT MODE ----
+            if (window.EDIT_MODE && window.CONSULTATION_DATA) {
+                prefillEditMode();
+                document.getElementById('submitBtnText').textContent = 'Update Consultation';
+                const titleEl = document.querySelector('.form-container h1');
+                if (titleEl) titleEl.innerHTML = '<i class="fas fa-edit text-blue-600"></i> Edit Association Consultation';
+                const cid = document.getElementById('consultationId');
+                if (cid) { cid.readOnly = true; cid.classList.add('bg-gray-100', 'cursor-not-allowed'); }
+            }
         });
 
         // ============================================================
@@ -1140,72 +1209,45 @@
         }
 
         // ============================================================
-        // OTHER TOGGLE HANDLING
+        // OTHER TOGGLE
         // ============================================================
         function setupOtherToggles() {
-            // For static selects with data-other-target
             document.querySelectorAll('select.other-toggle[data-other-target]').forEach(function(select) {
-                // Remove existing listener to avoid duplicates
                 select.removeEventListener('change', handleOtherToggle);
                 select.addEventListener('change', handleOtherToggle);
             });
         }
-
         function handleOtherToggle(e) {
             const select = e.target;
             const targetId = select.getAttribute('data-other-target');
             if (!targetId) return;
-            
-            // Find the wrapper - could be in same card or document
             let wrapper = document.getElementById(targetId);
             if (!wrapper) {
-                // Try to find within the same parent card
                 const card = select.closest('.job-demand-card');
-                if (card) {
-                    wrapper = card.querySelector('#' + targetId);
-                }
+                if (card) wrapper = card.querySelector('#' + targetId);
             }
-            
             if (!wrapper) return;
-
             if (select.value === 'Other') {
                 wrapper.classList.add('show');
                 const input = wrapper.querySelector('input');
-                if (input) {
-                    setTimeout(() => input.focus(), 100);
-                }
+                if (input) setTimeout(() => input.focus(), 100);
             } else {
                 wrapper.classList.remove('show');
                 const input = wrapper.querySelector('input');
                 if (input) input.value = '';
             }
         }
-
-        // For templates, we need to setup after adding
         function setupTemplateOtherToggles(card) {
             card.querySelectorAll('select.other-toggle').forEach(function(select) {
-                select.addEventListener('change', function(e) {
-                    // Find the closest wrapper inside this card
-                    const wrapper = card.querySelector('.other-specify-wrapper');
-                    // We need to find the specific wrapper for this select
-                    // Since template might have multiple, we use a different approach
-                    // The wrapper is the next sibling of the select's parent div
+                select.addEventListener('change', function() {
                     const parentDiv = select.closest('div');
                     let wrapperEl = parentDiv ? parentDiv.querySelector('.other-specify-wrapper') : null;
-                    
-                    if (!wrapperEl) {
-                        // Fallback: find the next .other-specify-wrapper after this select
-                        wrapperEl = select.parentElement.querySelector('.other-specify-wrapper');
-                    }
-                    
+                    if (!wrapperEl) wrapperEl = select.parentElement.querySelector('.other-specify-wrapper');
                     if (!wrapperEl) return;
-                    
                     if (select.value === 'Other') {
                         wrapperEl.classList.add('show');
                         const input = wrapperEl.querySelector('input');
-                        if (input) {
-                            setTimeout(() => input.focus(), 100);
-                        }
+                        if (input) setTimeout(() => input.focus(), 100);
                     } else {
                         wrapperEl.classList.remove('show');
                         const input = wrapperEl.querySelector('input');
@@ -1216,15 +1258,13 @@
         }
 
         // ============================================================
-        // RECRUITMENT CHALLENGES OTHER TOGGLE
+        // RECRUITMENT OTHER
         // ============================================================
         function toggleRecChallengeOther(checkbox) {
             const wrapper = document.getElementById('recChallengesOtherWrapper');
             if (checkbox.checked) {
                 wrapper.classList.add('show');
-                setTimeout(() => {
-                    document.getElementById('recChallengesOther').focus();
-                }, 100);
+                setTimeout(() => document.getElementById('recChallengesOther').focus(), 100);
             } else {
                 wrapper.classList.remove('show');
                 document.getElementById('recChallengesOther').value = '';
@@ -1232,7 +1272,7 @@
         }
 
         // ============================================================
-        // JOB DEMAND FUNCTIONS
+        // JOB / APP
         // ============================================================
         function addJobDemand() {
             const template = document.getElementById('jobDemandTemplate');
@@ -1240,26 +1280,16 @@
             jobCounter++;
             const card = clone.querySelector('.job-demand-card');
             card.querySelector('.job-number').textContent = `#${jobCounter}`;
-            
-            // Setup other toggles for this new card
             setupTemplateOtherToggles(card);
-            
             document.getElementById('jobDemandsContainer').appendChild(card);
         }
-
-        // ============================================================
-        // APPRENTICESHIP FUNCTIONS
-        // ============================================================
         function addApprenticeship() {
             const template = document.getElementById('apprenticeshipTemplate');
             const clone = template.content.cloneNode(true);
             appCounter++;
             const card = clone.querySelector('.job-demand-card');
             card.querySelector('.app-number').textContent = `#${appCounter}`;
-            
-            // Setup other toggles for this new card
             setupTemplateOtherToggles(card);
-            
             document.getElementById('apprenticeshipsContainer').appendChild(card);
         }
 
@@ -1269,55 +1299,24 @@
         function setupFileUpload() {
             const dropArea = document.getElementById('fileDropArea');
             const fileInput = document.getElementById('supportingDocument');
-
             dropArea.addEventListener('click', () => fileInput.click());
-
-            dropArea.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                dropArea.classList.add('dragover');
-            });
-
-            dropArea.addEventListener('dragleave', () => {
-                dropArea.classList.remove('dragover');
-            });
-
+            dropArea.addEventListener('dragover', (e) => { e.preventDefault(); dropArea.classList.add('dragover'); });
+            dropArea.addEventListener('dragleave', () => dropArea.classList.remove('dragover'));
             dropArea.addEventListener('drop', (e) => {
-                e.preventDefault();
-                dropArea.classList.remove('dragover');
-                if (e.dataTransfer.files.length) {
-                    fileInput.files = e.dataTransfer.files;
-                    handleFileSelect(fileInput.files[0]);
-                }
+                e.preventDefault(); dropArea.classList.remove('dragover');
+                if (e.dataTransfer.files.length) { fileInput.files = e.dataTransfer.files; handleFileSelect(fileInput.files[0]); }
             });
-
-            fileInput.addEventListener('change', () => {
-                if (fileInput.files.length) {
-                    handleFileSelect(fileInput.files[0]);
-                }
-            });
+            fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFileSelect(fileInput.files[0]); });
         }
-
         function handleFileSelect(file) {
-            const maxSize = 50 * 1024; // 50KB
+            const maxSize = 50 * 1024;
             const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/bmp'];
-
-            if (!allowedTypes.includes(file.type)) {
-                showToast('Invalid file type. Only PDF and Images are allowed.', 'error');
-                clearFile();
-                return;
-            }
-
-            if (file.size > maxSize) {
-                showToast('File size exceeds 50KB limit.', 'error');
-                clearFile();
-                return;
-            }
-
+            if (!allowedTypes.includes(file.type)) { showToast('Invalid file type.', 'error'); clearFile(); return; }
+            if (file.size > maxSize) { showToast('File size exceeds 50KB limit.', 'error'); clearFile(); return; }
             document.getElementById('fileName').textContent = file.name;
             document.getElementById('fileInfo').classList.remove('hidden');
             document.getElementById('fileDropArea').style.display = 'none';
         }
-
         function clearFile() {
             document.getElementById('supportingDocument').value = '';
             document.getElementById('fileInfo').classList.add('hidden');
@@ -1325,74 +1324,273 @@
         }
 
         // ============================================================
-        // FORM SUBMIT
+        // EDIT MODE — PREFILL
+        // ============================================================
+        function _setVal(id, val) {
+            const el = document.getElementById(id);
+            if (el) el.value = (val === null || val === undefined) ? '' : val;
+        }
+        function _setSelectOther(selectId, otherId, val, otherVal) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            if (!val) { sel.value = ''; return; }
+            let found = false;
+            for (let opt of sel.options) { if (opt.value === val) { found = true; break; } }
+            if (found) { sel.value = val; }
+            else {
+                sel.value = 'Other';
+                sel.dispatchEvent(new Event('change'));
+                if (otherId) {
+                    const other = document.getElementById(otherId);
+                    if (other) other.value = otherVal || val;
+                }
+            }
+        }
+        function _setCheckboxList(name, values) {
+            document.querySelectorAll(`[name="${name}"]`).forEach(cb => {
+                cb.checked = (values || []).includes(cb.value);
+            });
+        }
+
+        function fillJobRole(job) {
+            const card = document.querySelector('#jobDemandsContainer .job-demand-card:last-child');
+            if (!card) return;
+            const setVal = (name, val) => {
+                const el = card.querySelector(`[name="${name}"]`);
+                if (el) el.value = (val === null || val === undefined) ? '' : val;
+            };
+            const setSelectOrOther = (selName, otherName, val) => {
+                const sel = card.querySelector(`[name="${selName}"]`);
+                if (!sel) return;
+                if (!val) return;
+                let found = false;
+                for (let opt of sel.options) { if (opt.value === val) { found = true; break; } }
+                if (found) { sel.value = val; }
+                else {
+                    sel.value = 'Other';
+                    sel.dispatchEvent(new Event('change'));
+                    const other = card.querySelector(`[name="${otherName}"]`);
+                    if (other) other.value = val;
+                }
+            };
+
+            setVal('job_role[]', job.job_role);
+            setVal('job_sector[]', job.sector);
+            setVal('job_location[]', job.location);
+            setSelectOrOther('job_qualification[]', 'job_qualification_other[]', job.qualification);
+            setSelectOrOther('job_experience[]', 'job_experience_other[]', job.experience);
+            // certification
+            const certSel = card.querySelector('[name="job_certification[]"]');
+            if (certSel) {
+                if (job.certification === 'No' || job.certification === 'Yes') certSel.value = job.certification || 'No';
+                else if (job.certification) {
+                    certSel.value = 'Other';
+                    certSel.dispatchEvent(new Event('change'));
+                    const other = card.querySelector('[name="job_certification_other[]"]');
+                    if (other) other.value = job.certification;
+                }
+            }
+            setVal('job_certification_detail[]', job.certification_detail);
+            setVal('job_salary[]', job.salary);
+            setVal('job_salary_period[]', job.salary_period || 'Month');
+            setSelectOrOther('job_employment_type[]', 'job_employment_type_other[]', job.employment_type);
+            setVal('job_current[]', job.current_openings);
+            setVal('job_6months[]', job.openings_6_months);
+            setVal('job_12months[]', job.openings_12_months);
+            setVal('job_tech_skills[]', job.tech_skills);
+            setVal('job_employability_skills[]', job.employability_skills);
+            setVal('job_women_suitable[]', job.women_suitable || 'Yes');
+            setVal('job_pwd[]', job.pwd || 'Yes');
+
+            const mob = job.mobility || [];
+            const mobMap = {
+                'Local': 'job_mobility_local[]',
+                'Inter-district': 'job_mobility_interdist[]',
+                'Inter-state': 'job_mobility_interstate[]',
+                'Shift work': 'job_mobility_shift[]',
+                'Travel': 'job_mobility_travel[]',
+                'Accommodation available': 'job_mobility_accom[]',
+            };
+            Object.keys(mobMap).forEach(key => {
+                if (mob.includes(key)) {
+                    const cb = card.querySelector(`[name="${mobMap[key]}"]`);
+                    if (cb) cb.checked = true;
+                }
+            });
+
+            setVal('job_apprentice_seats[]', job.apprentice_seats);
+            setVal('job_ojt_seats[]', job.ojt_seats);
+            setVal('job_internship_seats[]', job.internship_seats);
+            setVal('job_reporting_employers[]', job.reporting_employers);
+            if (job.employer_list_attached) {
+                const cb = card.querySelector('[name="job_employer_list_attached[]"]');
+                if (cb) cb.checked = true;
+            }
+            setVal('job_remarks[]', job.remarks);
+        }
+
+        function fillApprenticeship(app) {
+            const card = document.querySelector('#apprenticeshipsContainer .job-demand-card:last-child');
+            if (!card) return;
+            const setVal = (name, val) => {
+                const el = card.querySelector(`[name="${name}"]`);
+                if (el) el.value = (val === null || val === undefined) ? '' : val;
+            };
+            const setSelectOrOther = (selName, otherName, val) => {
+                const sel = card.querySelector(`[name="${selName}"]`);
+                if (!sel || !val) return;
+                let found = false;
+                for (let opt of sel.options) { if (opt.value === val) { found = true; break; } }
+                if (found) sel.value = val;
+                else {
+                    sel.value = 'Other';
+                    sel.dispatchEvent(new Event('change'));
+                    const other = card.querySelector(`[name="${otherName}"]`);
+                    if (other) other.value = val;
+                }
+            };
+            setVal('app_job_role[]', app.job_role);
+            setSelectOrOther('app_opportunity_type[]', 'app_opportunity_type_other[]', app.opportunity_type);
+            setVal('app_employers_interested[]', app.employers_interested);
+            setVal('app_seats[]', app.seats);
+            setVal('app_duration[]', app.duration);
+            setVal('app_stipend[]', app.stipend);
+            setVal('app_start_period[]', app.start_period);
+            setSelectOrOther('app_conversion[]', 'app_conversion_other[]', app.conversion);
+            setVal('app_employer_list[]', app.employer_list || 'Yes');
+        }
+
+        function prefillEditMode() {
+            const d = window.CONSULTATION_DATA;
+            if (!d) return;
+
+            // Section A
+            _setVal('consultationId', d.consultation_id);
+            _setVal('districtRegion', d.district_region);
+            _setSelectOther('mode', 'modeOther', d.mode, d.mode_other);
+            _setVal('consultationDate', d.consultation_date);
+            _setVal('surveyorName', d.surveyor_name);
+
+            // Section B
+            _setVal('associationName', d.association_name);
+            _setSelectOther('associationType', 'associationTypeOther', d.association_type, d.association_type_other);
+            _setVal('primarySector', d.primary_sector);
+            _setSelectOther('geographicCoverage', 'geographicSpecify', d.geographic_coverage, d.geographic_specify);
+            _setVal('yearEstablished', d.year_established);
+            _setVal('totalMembers', d.total_members);
+            _setVal('activeMembers', d.active_members);
+            _setVal('keyClusters', d.key_clusters);
+            _setVal('compMicro', d.comp_micro);
+            _setVal('compSmall', d.comp_small);
+            _setVal('compMedium', d.comp_medium);
+            _setVal('compLarge', d.comp_large);
+            _setVal('respondentName', d.respondent_name);
+            _setVal('respondentMobile', d.respondent_mobile);
+            _setVal('respondentEmail', d.respondent_email);
+
+            // Section C
+            _setVal('majorProducts', d.major_products);
+            _setVal('estimatedWorkforce', d.estimated_workforce);
+            _setSelectOther('businessTrend', 'businessTrendOther', d.business_trend, '');
+            _setVal('growthDrivers', d.growth_drivers);
+            _setVal('upcomingProjects', d.upcoming_projects);
+            _setVal('peakHiring', d.peak_hiring);
+            _setVal('memberEmployersCount', d.member_employers_count);
+            if (d.member_list_attached) document.getElementById('memberListAttached').checked = true;
+
+            // Section D — Job Roles
+            const jc = document.getElementById('jobDemandsContainer');
+            jc.innerHTML = '';
+            jobCounter = 0;
+            (d.job_roles || []).forEach(job => { addJobDemand(); fillJobRole(job); });
+
+            // Section E — Apprenticeships
+            const ac = document.getElementById('apprenticeshipsContainer');
+            ac.innerHTML = '';
+            appCounter = 0;
+            (d.apprenticeships || []).forEach(app => { addApprenticeship(); fillApprenticeship(app); });
+
+            // Section F
+            _setCheckboxList('rec_challenges', d.recruitment_challenges || []);
+            _setVal('difficultRoles', d.difficult_roles);
+            _setVal('emergingRoles', d.emerging_roles);
+            _setVal('changingCompetencies', d.changing_competencies);
+            _setVal('skillGaps', d.skill_gaps);
+            _setVal('highDemandDistricts', d.high_demand_districts);
+            _setVal('unfilledReasons', d.unfilled_reasons);
+
+            // Section G
+            _setSelectOther('mobilisePlacements', 'mobilisePlacementsOther', d.mobilise_placements, '');
+            _setSelectOther('supportApprenticeship', 'supportApprenticeshipOther', d.support_apprenticeship, '');
+            _setSelectOther('supportGuestLectures', 'supportGuestLecturesOther', d.support_guest_lectures, '');
+            _setSelectOther('facilitateVisits', 'facilitateVisitsOther', d.facilitate_visits, '');
+            _setSelectOther('demandUpdates', 'demandUpdatesOther', d.demand_updates, '');
+            _setVal('nodalOfficerName', d.nodal_officer_name);
+            _setVal('nodalOfficerMobile', d.nodal_officer_mobile);
+            _setVal('nodalOfficerEmail', d.nodal_officer_email);
+
+            // Section H
+            _setSelectOther('surveyReviewed', 'surveyReviewedOther', d.survey_reviewed, '');
+            _setSelectOther('alignmentView', 'alignmentViewOther', d.alignment_view, '');
+            _setVal('priorityTraining', d.priority_training);
+            _setVal('curriculumChanges', d.curriculum_changes);
+            _setVal('placementActions', d.placement_actions);
+            _setVal('policySupport', d.policy_support);
+            _setVal('additionalRemarks', d.additional_remarks);
+
+            // Section I
+            _setSelectOther('supportingEvidence', 'supportingEvidenceOther', d.supporting_evidence, '');
+            _setSelectOther('demandEvidenceStatus', 'demandEvidenceStatusOther', d.demand_evidence_status, '');
+            _setVal('respondentSignature', d.respondent_signature);
+            _setVal('facilitatorSignature', d.facilitator_signature);
+            _setVal('submissionDate', d.submission_date);
+        }
+
+        // ============================================================
+        // SUBMIT
         // ============================================================
         async function handleSubmit(e) {
             e.preventDefault();
-
             const submitBtn = document.getElementById('submitBtn');
             const spinner = document.getElementById('submitSpinner');
 
-            // Validate required fields (Sirf Section A & B)
             const requiredFields = [
                 'consultationId', 'districtRegion', 'mode', 'consultationDate', 'surveyorName',
                 'associationName', 'associationType', 'primarySector', 'geographicCoverage',
                 'respondentName', 'respondentMobile', 'respondentEmail'
             ];
-
             for (const id of requiredFields) {
                 const el = document.getElementById(id);
                 if (!el.value.trim()) {
-                    showToast(`Please fill in the required field.`, 'error');
+                    showToast(`Please fill in all required fields.`, 'error');
                     el.focus();
                     return;
                 }
             }
 
-            // Note: Job Role check removed so user can skip Section D & E entirely
-
-            // Collect all form data
             const formData = new FormData(document.getElementById('associationForm'));
 
-            // Collect job demands
+            // ---- Job demands ----
             const jobDemands = [];
             document.querySelectorAll('#jobDemandsContainer .job-demand-card').forEach(card => {
-                const getVal = (name) => {
-                    const el = card.querySelector(`[name="${name}"]`);
-                    return el ? el.value : '';
-                };
-                const getCheckboxVals = (name) => {
-                    const els = card.querySelectorAll(`[name="${name}"]:checked`);
-                    return Array.from(els).map(el => el.value);
-                };
+                const getVal = (name) => { const el = card.querySelector(`[name="${name}"]`); return el ? el.value : ''; };
+                const getCheckboxVals = (name) => Array.from(card.querySelectorAll(`[name="${name}"]:checked`)).map(el => el.value);
 
-                // Get qualification value - if Other, use the other field
                 let qualification = getVal('job_qualification[]');
                 const qualificationOther = getVal('job_qualification_other[]');
-                if (qualification === 'Other' && qualificationOther) {
-                    qualification = qualificationOther;
-                }
+                if (qualification === 'Other' && qualificationOther) qualification = qualificationOther;
 
-                // Get experience value
                 let experience = getVal('job_experience[]');
                 const experienceOther = getVal('job_experience_other[]');
-                if (experience === 'Other' && experienceOther) {
-                    experience = experienceOther;
-                }
+                if (experience === 'Other' && experienceOther) experience = experienceOther;
 
-                // Get certification
                 let certification = getVal('job_certification[]');
                 const certificationOther = getVal('job_certification_other[]');
-                if (certification === 'Other' && certificationOther) {
-                    certification = certificationOther;
-                }
+                if (certification === 'Other' && certificationOther) certification = certificationOther;
 
-                // Get employment type
                 let employmentType = getVal('job_employment_type[]');
                 const employmentTypeOther = getVal('job_employment_type_other[]');
-                if (employmentType === 'Other' && employmentTypeOther) {
-                    employmentType = employmentTypeOther;
-                }
+                if (employmentType === 'Other' && employmentTypeOther) employmentType = employmentTypeOther;
 
                 jobDemands.push({
                     job_role: getVal('job_role[]'),
@@ -1428,30 +1626,19 @@
                     remarks: getVal('job_remarks[]')
                 });
             });
-
             formData.append('job_demands', JSON.stringify(jobDemands));
 
-            // Collect apprenticeships
+            // ---- Apprenticeships ----
             const apprenticeships = [];
             document.querySelectorAll('#apprenticeshipsContainer .job-demand-card').forEach(card => {
-                const getVal = (name) => {
-                    const el = card.querySelector(`[name="${name}"]`);
-                    return el ? el.value : '';
-                };
-
-                // Get opportunity type
+                const getVal = (name) => { const el = card.querySelector(`[name="${name}"]`); return el ? el.value : ''; };
                 let opportunityType = getVal('app_opportunity_type[]');
                 const opportunityTypeOther = getVal('app_opportunity_type_other[]');
-                if (opportunityType === 'Other' && opportunityTypeOther) {
-                    opportunityType = opportunityTypeOther;
-                }
+                if (opportunityType === 'Other' && opportunityTypeOther) opportunityType = opportunityTypeOther;
 
-                // Get conversion
                 let conversion = getVal('app_conversion[]');
                 const conversionOther = getVal('app_conversion_other[]');
-                if (conversion === 'Other' && conversionOther) {
-                    conversion = conversionOther;
-                }
+                if (conversion === 'Other' && conversionOther) conversion = conversionOther;
 
                 apprenticeships.push({
                     job_role: getVal('app_job_role[]'),
@@ -1465,96 +1652,82 @@
                     employer_list: getVal('app_employer_list[]')
                 });
             });
-
             formData.append('apprenticeships', JSON.stringify(apprenticeships));
 
-            // Collect recruitment challenges
+            // ---- Recruitment challenges ----
             const challenges = [];
             document.querySelectorAll('[name="rec_challenges"]:checked').forEach(el => {
-                if (el.value !== 'Other') {
-                    challenges.push(el.value);
-                }
+                if (el.value !== 'Other') challenges.push(el.value);
             });
             const otherChallenge = document.getElementById('recChallengesOther').value.trim();
-            if (otherChallenge) {
-                challenges.push(otherChallenge);
-            }
+            if (otherChallenge) challenges.push(otherChallenge);
             formData.append('recruitment_challenges', JSON.stringify(challenges));
 
-            // Show loading
+            // ---- Send ----
             submitBtn.disabled = true;
             spinner.classList.remove('hidden');
-            document.getElementById('submitBtnText').textContent = 'Submitting...';
+            document.getElementById('submitBtnText').textContent = window.EDIT_MODE ? 'Updating...' : 'Submitting...';
+
+            const url = window.EDIT_MODE
+                ? `/admin/association/${window.EDIT_ID}/update/`
+                : '/api/association/submit/';
 
             try {
-                const response = await fetch('/api/association/submit/', {
+                const response = await fetch(url, {
                     method: 'POST',
                     body: formData,
-                    headers: {
-                        'X-CSRFToken': document.querySelector('[name="csrfmiddlewaretoken"]').value
-                    }
+                    headers: { 'X-CSRFToken': document.querySelector('[name="csrfmiddlewaretoken"]').value }
                 });
-
                 const result = await response.json();
 
                 if (result.status === 'success') {
-                    showToast('Consultation submitted successfully!', 'success');
+                    showToast(window.EDIT_MODE ? 'Consultation updated successfully!' : 'Consultation submitted successfully!', 'success');
                     setTimeout(() => {
-                        window.location.href = '/association/';
-                    }, 1500);
+                        window.location.href = window.EDIT_MODE ? '/admin/associations/' : '/association/';
+                    }, 1200);
                 } else {
-                    showToast(result.message || 'Submission failed. Please try again.', 'error');
+                    showToast(result.message || 'Operation failed. Please try again.', 'error');
                 }
-            } catch (error) {
-                console.error('Submit error:', error);
+            } catch (err) {
+                console.error('Submit error:', err);
                 showToast('Network error. Please check your connection.', 'error');
             } finally {
                 submitBtn.disabled = false;
                 spinner.classList.add('hidden');
-                document.getElementById('submitBtnText').textContent = 'Submit Consultation';
+                document.getElementById('submitBtnText').textContent = window.EDIT_MODE ? 'Update Consultation' : 'Submit Consultation';
             }
         }
 
         // ============================================================
-        // RESET FORM
+        // RESET
         // ============================================================
         function resetForm() {
             if (!confirm('Are you sure you want to reset the form? All data will be cleared.')) return;
-
             document.getElementById('associationForm').reset();
             document.getElementById('jobDemandsContainer').innerHTML = '';
             document.getElementById('apprenticeshipsContainer').innerHTML = '';
             document.getElementById('fileInfo').classList.add('hidden');
             document.getElementById('fileDropArea').style.display = 'block';
-
-            // Hide all other-specify wrappers
-            document.querySelectorAll('.other-specify-wrapper').forEach(el => {
-                el.classList.remove('show');
-            });
-
+            document.querySelectorAll('.other-specify-wrapper').forEach(el => el.classList.remove('show'));
             jobCounter = 0;
             appCounter = 0;
             addJobDemand();
             addApprenticeship();
-
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('consultationDate').value = today;
             document.getElementById('submissionDate').value = today;
-
             showToast('Form has been reset.', 'info');
         }
 
         // ============================================================
-        // TOAST NOTIFICATION
+        // TOAST
         // ============================================================
         function showToast(message, type = 'info') {
             const toast = document.getElementById('toast');
             toast.textContent = message;
             toast.className = `toast toast-${type} show`;
             clearTimeout(toast._timeout);
-            toast._timeout = setTimeout(() => {
-                toast.classList.remove('show');
-            }, 4000);
+            toast._timeout = setTimeout(() => toast.classList.remove('show'), 4000);
         }
     </script>
 

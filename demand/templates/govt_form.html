@@ -264,9 +264,79 @@
         }
         .sector-table .remove-row:hover { color: #c53030; }
         .table-responsive { overflow-x: auto; }
+
+        /* ===== Admin Edit Mode Banner ===== */
+        .edit-mode-banner {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: linear-gradient(90deg, #1e293b, #334155);
+            color: #fff;
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .edit-mode-banner .banner-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .edit-mode-banner .banner-left i {
+            color: #60a5fa;
+            font-size: 1.1rem;
+        }
+        .edit-mode-banner .banner-left code {
+            background: rgba(255,255,255,0.15);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #fbbf24;
+        }
+        .edit-mode-banner a {
+            color: #93c5fd;
+            text-decoration: none;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 6px;
+            background: rgba(255,255,255,0.08);
+            transition: all 0.2s;
+        }
+        .edit-mode-banner a:hover {
+            background: rgba(255,255,255,0.18);
+            color: #fff;
+        }
     </style>
+    {% if edit_mode %}
+    <script>
+        window.EDIT_MODE = true;
+        window.EDIT_ID = {{ consultation_id }};
+        window.CONSULTATION_DATA = {{ consultation_data_json|safe }};
+    </script>
+    {% endif %}
+    
 </head>
 <body>
+
+    {% if edit_mode %}
+    <div class="edit-mode-banner">
+        <div class="banner-left">
+            <i class="fas fa-shield-alt"></i>
+            <strong>Admin Edit Mode</strong>
+            <span>— Editing Consultation <code>#{{ consultation_id }}</code></span>
+        </div>
+        <a href="{% url 'survey:admin_govt_list' %}">
+            <i class="fas fa-arrow-left"></i> Back to Admin List
+        </a>
+    </div>
+    {% endif %}
 
     <!-- Toast Notification -->
     <div id="toast" class="toast"></div>
@@ -814,54 +884,28 @@
 
     <script>
         // ============================================================
-        // GLOBAL ERROR CATCHER
+        // GLOBALS
         // ============================================================
         window.onerror = function(msg, url, line, col, error) {
             console.error('🔴 GLOBAL JS ERROR:', msg, 'at line', line);
-            console.error('Error object:', error);
             return false;
         };
-
         window.addEventListener('unhandledrejection', function(e) {
             console.error('🔴 UNHANDLED PROMISE REJECTION:', e.reason);
         });
 
-        // ============================================================
-        // DEBUG HELPER
-        // ============================================================
         const DEBUG = true;
-        function log(...args) {
-            if (DEBUG) console.log('%c[GOVT-FORM]', 'color:#3182ce;font-weight:bold', ...args);
-        }
-        function logErr(...args) {
-            console.error('%c[GOVT-FORM ERROR]', 'color:#e53e3e;font-weight:bold', ...args);
-        }
+        function log(...args) { if (DEBUG) console.log('%c[GOVT-FORM]', 'color:#3182ce;font-weight:bold', ...args); }
+        function logErr(...args) { console.error('%c[GOVT-FORM ERROR]', 'color:#e53e3e;font-weight:bold', ...args); }
 
-        // ============================================================
-        // GLOBALS
-        // ============================================================
         let startTime = new Date();
         let investmentRowCounter = 0;
         let sectoralRowCounter = 0;
         let occupationalRowCounter = 0;
 
-        // ============================================================
-        // SAFE DOM HELPERS
-        // ============================================================
-        function getEl(id) {
-            const el = document.getElementById(id);
-            if (!el) logErr('Element not found:', id);
-            return el;
-        }
-        function val(id) {
-            const el = document.getElementById(id);
-            return el ? el.value : '';
-        }
-        function setBtnText(text) {
-            const el = document.getElementById('submitBtnText');
-            if (el) el.textContent = text;
-            else logErr('submitBtnText span not found!');
-        }
+        function getEl(id) { const el = document.getElementById(id); if (!el) logErr('Element not found:', id); return el; }
+        function val(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+        function setBtnText(text) { const el = document.getElementById('submitBtnText'); if (el) el.textContent = text; }
 
         // ============================================================
         // DOM READY
@@ -884,18 +928,16 @@
             setupOtherToggles();
 
             const form = document.getElementById('govtForm');
-            if (form) {
-                form.addEventListener('submit', handleSubmit);
-                log('Form submit handler attached');
-            } else {
-                logErr('govtForm element NOT FOUND — submit will fail!');
-            }
+            if (form) form.addEventListener('submit', handleSubmit);
 
-            const csrf = document.querySelector('[name="csrfmiddlewaretoken"]');
-            if (csrf) {
-                log('CSRF token present:', csrf.value.substring(0, 10) + '...');
-            } else {
-                logErr('CSRF token NOT FOUND in form!');
+            // ---- EDIT MODE PREFILL ----
+            if (window.EDIT_MODE && window.CONSULTATION_DATA) {
+                prefillEditMode();
+                setBtnText('Update Consultation');
+                const titleEl = document.querySelector('.form-container h1');
+                if (titleEl) titleEl.innerHTML = '<i class="fas fa-edit text-blue-600"></i> Edit Government Consultation';
+                const cid = document.getElementById('consultationId');
+                if (cid) { cid.readOnly = true; cid.classList.add('bg-gray-100', 'cursor-not-allowed'); }
             }
         });
 
@@ -911,7 +953,7 @@
         }
 
         // ============================================================
-        // OTHER TOGGLE (for static selects)
+        // OTHER TOGGLES
         // ============================================================
         function setupOtherToggles() {
             document.querySelectorAll('select.other-toggle[data-other-target]').forEach(function(select) {
@@ -919,14 +961,12 @@
                 select.addEventListener('change', handleOtherToggle);
             });
         }
-
         function handleOtherToggle(e) {
             const select = e.target;
             const targetId = select.getAttribute('data-other-target');
             if (!targetId) return;
             const wrapper = document.getElementById(targetId);
             if (!wrapper) return;
-
             if (select.value === 'Other') {
                 wrapper.classList.add('show');
                 const input = wrapper.querySelector('input');
@@ -939,70 +979,45 @@
         }
 
         // ============================================================
-        // CHECKBOX OTHER TOGGLES
+        // CHECKBOX "OTHER" TOGGLES
         // ============================================================
         function toggleOfficeVisitedOther(cb) {
-            const w = document.getElementById('officeVisitedOtherWrapper');
-            if (!w) return;
+            const w = document.getElementById('officeVisitedOtherWrapper'); if (!w) return;
             cb.checked ? w.classList.add('show') : w.classList.remove('show');
-            if (!cb.checked) {
-                const o = document.getElementById('officeVisitedOther');
-                if (o) o.value = '';
-            }
+            if (!cb.checked) { const o = document.getElementById('officeVisitedOther'); if (o) o.value = ''; }
         }
         function toggleBodyTypeOther(cb) {
-            const w = document.getElementById('bodyTypeOtherWrapper');
-            if (!w) return;
+            const w = document.getElementById('bodyTypeOtherWrapper'); if (!w) return;
             cb.checked ? w.classList.add('show') : w.classList.remove('show');
-            if (!cb.checked) {
-                const o = document.getElementById('bodyTypeOther');
-                if (o) o.value = '';
-            }
+            if (!cb.checked) { const o = document.getElementById('bodyTypeOther'); if (o) o.value = ''; }
         }
         function toggleJurisdictionOther(cb) {
-            const w = document.getElementById('jurisdictionOtherWrapper');
-            if (!w) return;
+            const w = document.getElementById('jurisdictionOtherWrapper'); if (!w) return;
             cb.checked ? w.classList.add('show') : w.classList.remove('show');
-            if (!cb.checked) {
-                const o = document.getElementById('jurisdictionOther');
-                if (o) o.value = '';
-            }
+            if (!cb.checked) { const o = document.getElementById('jurisdictionOther'); if (o) o.value = ''; }
         }
         function toggleFacilitationModeOther(cb) {
-            const w = document.getElementById('facilitationModeOtherWrapper');
-            if (!w) return;
+            const w = document.getElementById('facilitationModeOtherWrapper'); if (!w) return;
             cb.checked ? w.classList.add('show') : w.classList.remove('show');
-            if (!cb.checked) {
-                const o = document.getElementById('facilitationModeOther');
-                if (o) o.value = '';
-            }
+            if (!cb.checked) { const o = document.getElementById('facilitationModeOther'); if (o) o.value = ''; }
         }
         function toggleRecruitmentOther(cb) {
-            const w = document.getElementById('recruitmentOtherWrapper');
-            if (!w) return;
+            const w = document.getElementById('recruitmentOtherWrapper'); if (!w) return;
             cb.checked ? w.classList.add('show') : w.classList.remove('show');
-            if (!cb.checked) {
-                const o = document.getElementById('recruitmentOther');
-                if (o) o.value = '';
-            }
+            if (!cb.checked) { const o = document.getElementById('recruitmentOther'); if (o) o.value = ''; }
         }
         function toggleEvidenceOther(cb) {
-            const w = document.getElementById('evidenceOtherWrapper');
-            if (!w) return;
+            const w = document.getElementById('evidenceOtherWrapper'); if (!w) return;
             cb.checked ? w.classList.add('show') : w.classList.remove('show');
-            if (!cb.checked) {
-                const o = document.getElementById('evidenceOther');
-                if (o) o.value = '';
-            }
+            if (!cb.checked) { const o = document.getElementById('evidenceOther'); if (o) o.value = ''; }
         }
 
         // ============================================================
-        // INVESTMENT PIPELINE TABLE
+        // DYNAMIC TABLES
         // ============================================================
         function addInvestmentPipelineRow() {
             investmentRowCounter++;
-            const tbody = document.getElementById('investmentPipelineBody');
-            if (!tbody) return;
+            const tbody = document.getElementById('investmentPipelineBody'); if (!tbody) return;
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><input type="text" name="inv_sector[]" placeholder="e.g. Manufacturing & Heavy Engineering" /></td>
@@ -1015,13 +1030,9 @@
             tbody.appendChild(tr);
         }
 
-        // ============================================================
-        // SECTORAL ANALYSIS TABLE
-        // ============================================================
         function addSectoralAnalysisRow() {
             sectoralRowCounter++;
-            const tbody = document.getElementById('sectoralAnalysisBody');
-            if (!tbody) return;
+            const tbody = document.getElementById('sectoralAnalysisBody'); if (!tbody) return;
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><input type="text" name="sector_classification[]" placeholder="e.g. Textile, Handloom & Leather" /></td>
@@ -1032,13 +1043,9 @@
             tbody.appendChild(tr);
         }
 
-        // ============================================================
-        // OCCUPATIONAL CATEGORIES TABLE
-        // ============================================================
         function addOccupationalCategoryRow() {
             occupationalRowCounter++;
-            const tbody = document.getElementById('occupationalCategoriesBody');
-            if (!tbody) return;
+            const tbody = document.getElementById('occupationalCategoriesBody'); if (!tbody) return;
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><input type="text" name="occ_category[]" placeholder="e.g. Welder, Electrician" /></td>
@@ -1071,34 +1078,21 @@
             const dropArea = document.getElementById('fileDropArea');
             const fileInput = document.getElementById('supportingDocument');
             if (!dropArea || !fileInput) return;
-
             dropArea.addEventListener('click', () => fileInput.click());
             dropArea.addEventListener('dragover', (e) => { e.preventDefault(); dropArea.classList.add('dragover'); });
             dropArea.addEventListener('dragleave', () => dropArea.classList.remove('dragover'));
             dropArea.addEventListener('drop', (e) => {
                 e.preventDefault();
                 dropArea.classList.remove('dragover');
-                if (e.dataTransfer.files.length) {
-                    fileInput.files = e.dataTransfer.files;
-                    handleFileSelect(fileInput.files[0]);
-                }
+                if (e.dataTransfer.files.length) { fileInput.files = e.dataTransfer.files; handleFileSelect(fileInput.files[0]); }
             });
-            fileInput.addEventListener('change', () => {
-                if (fileInput.files.length) handleFileSelect(fileInput.files[0]);
-            });
+            fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFileSelect(fileInput.files[0]); });
         }
-
         function handleFileSelect(file) {
             const maxSize = 50 * 1024;
             const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/bmp'];
-            if (!allowedTypes.includes(file.type)) {
-                showToast('Invalid file type. Only PDF and Images are allowed.', 'error');
-                clearFile(); return;
-            }
-            if (file.size > maxSize) {
-                showToast('File size exceeds 50KB limit.', 'error');
-                clearFile(); return;
-            }
+            if (!allowedTypes.includes(file.type)) { showToast('Invalid file type.', 'error'); clearFile(); return; }
+            if (file.size > maxSize) { showToast('File size exceeds 50KB limit.', 'error'); clearFile(); return; }
             const fnEl = document.getElementById('fileName');
             const fiEl = document.getElementById('fileInfo');
             const fdEl = document.getElementById('fileDropArea');
@@ -1106,7 +1100,6 @@
             if (fiEl) fiEl.classList.remove('hidden');
             if (fdEl) fdEl.style.display = 'none';
         }
-
         function clearFile() {
             const input = document.getElementById('supportingDocument');
             const fi = document.getElementById('fileInfo');
@@ -1117,7 +1110,7 @@
         }
 
         // ============================================================
-        // HELPER: get checked values
+        // HELPERS
         // ============================================================
         function getCheckedValues(name) {
             const vals = [];
@@ -1126,28 +1119,210 @@
             });
             return vals;
         }
-
         function getRadioValue(name) {
             const el = document.querySelector(`input[name="${name}"]:checked`);
             return el ? el.value : '';
         }
-
-        // ============================================================
-        // GET CSRF TOKEN
-        // ============================================================
         function getCsrfToken() {
             const input = document.querySelector('[name="csrfmiddlewaretoken"]');
             if (input && input.value) return input.value;
-
             const name = 'csrftoken';
             const cookies = document.cookie.split(';');
             for (let c of cookies) {
                 c = c.trim();
-                if (c.startsWith(name + '=')) {
-                    return decodeURIComponent(c.substring(name.length + 1));
-                }
+                if (c.startsWith(name + '=')) return decodeURIComponent(c.substring(name.length + 1));
             }
             return '';
+        }
+
+        // ============================================================
+        // EDIT MODE PREFILL
+        // ============================================================
+        function _setVal(id, val) {
+            const el = document.getElementById(id);
+            if (el) el.value = (val === null || val === undefined) ? '' : val;
+        }
+        function _setSelectOther(selectId, otherId, val, otherVal) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            if (!val) { sel.value = ''; return; }
+            let found = false;
+            for (let opt of sel.options) { if (opt.value === val) { found = true; break; } }
+            if (found) sel.value = val;
+            else {
+                sel.value = 'Other';
+                sel.dispatchEvent(new Event('change'));
+                if (otherId) { const o = document.getElementById(otherId); if (o) o.value = otherVal || val; }
+            }
+        }
+        function _setRadio(name, value) {
+            document.querySelectorAll(`input[name="${name}"]`).forEach(r => r.checked = false);
+            if (!value) return;
+            document.querySelectorAll(`input[name="${name}"]`).forEach(r => {
+                if (r.value === value) r.checked = true;
+            });
+        }
+        function _setCheckboxGroup(name, values, otherCheckId, otherInputId, otherWrapperId) {
+            document.querySelectorAll(`input[name="${name}"]`).forEach(cb => cb.checked = false);
+            const valuesArr = values || [];
+            const knownValues = [];
+            document.querySelectorAll(`input[name="${name}"]`).forEach(cb => {
+                if (cb.value !== 'Other') knownValues.push(cb.value);
+            });
+            let otherValue = null;
+            valuesArr.forEach(v => {
+                if (knownValues.includes(v)) {
+                    document.querySelectorAll(`input[name="${name}"]`).forEach(cb => {
+                        if (cb.value === v) cb.checked = true;
+                    });
+                } else if (v) {
+                    otherValue = v;
+                }
+            });
+            const otherCheck = document.getElementById(otherCheckId);
+            const otherWrapper = document.getElementById(otherWrapperId);
+            const otherInput = document.getElementById(otherInputId);
+            if (otherValue) {
+                if (otherCheck) otherCheck.checked = true;
+                if (otherWrapper) otherWrapper.classList.add('show');
+                if (otherInput) otherInput.value = otherValue;
+            } else {
+                if (otherCheck) otherCheck.checked = false;
+                if (otherWrapper) otherWrapper.classList.remove('show');
+                if (otherInput) otherInput.value = '';
+            }
+        }
+        function _fillInvestmentPipeline(rows) {
+            const tbody = document.getElementById('investmentPipelineBody'); if (!tbody) return;
+            tbody.innerHTML = ''; investmentRowCounter = 0;
+            if (!rows || rows.length === 0) { addInvestmentPipelineRow(); return; }
+            rows.forEach(r => {
+                addInvestmentPipelineRow();
+                const tr = tbody.querySelector('tr:last-child');
+                const s1 = tr.querySelector('[name="inv_sector[]"]');
+                const s2 = tr.querySelector('[name="inv_dominant[]"]');
+                const s3 = tr.querySelector('[name="inv_emerging[]"]');
+                const s4 = tr.querySelector('[name="inv_investment[]"]');
+                const s5 = tr.querySelector('[name="inv_district[]"]');
+                if (s1) s1.value = r.sector_classification || '';
+                if (s2) s2.value = r.dominant_sectors || '';
+                if (s3) s3.value = r.emerging_sectors || '';
+                if (s4) s4.value = r.approx_investment || '';
+                if (s5) s5.value = r.specific_district || '';
+            });
+        }
+        function _fillSectoralAnalysis(rows) {
+            const tbody = document.getElementById('sectoralAnalysisBody'); if (!tbody) return;
+            tbody.innerHTML = ''; sectoralRowCounter = 0;
+            if (!rows || rows.length === 0) { addSectoralAnalysisRow(); return; }
+            rows.forEach(r => {
+                addSectoralAnalysisRow();
+                const tr = tbody.querySelector('tr:last-child');
+                const s1 = tr.querySelector('[name="sector_classification[]"]');
+                const s2 = tr.querySelector('[name="sector_dominant[]"]');
+                const s3 = tr.querySelector('[name="sector_emerging[]"]');
+                if (s1) s1.value = r.sector_classification || '';
+                if (s2) s2.value = r.dominant_sectors || '';
+                if (s3) s3.value = r.emerging_sectors || '';
+            });
+        }
+        function _fillOccupationalCategories(rows) {
+            const tbody = document.getElementById('occupationalCategoriesBody'); if (!tbody) return;
+            tbody.innerHTML = ''; occupationalRowCounter = 0;
+            if (!rows || rows.length === 0) { addOccupationalCategoryRow(); return; }
+            rows.forEach(r => {
+                addOccupationalCategoryRow();
+                const tr = tbody.querySelector('tr:last-child');
+                const c1 = tr.querySelector('[name="occ_category[]"]');
+                const c2 = tr.querySelector('[name="occ_sector[]"]');
+                const c3 = tr.querySelector('[name="occ_qualification[]"]');
+                const c4 = tr.querySelector('[name="occ_current[]"]');
+                const c5 = tr.querySelector('[name="occ_projected[]"]');
+                const c6 = tr.querySelector('[name="occ_wage[]"]');
+                if (c1) c1.value = r.category || '';
+                if (c2) c2.value = r.sector || '';
+                if (c3) c3.value = r.qualification || '';
+                if (c4) c4.value = r.current_openings || 0;
+                if (c5) c5.value = r.projected_demand || 0;
+                if (c6) c6.value = r.wage_range || '';
+            });
+        }
+
+        function prefillEditMode() {
+            const d = window.CONSULTATION_DATA;
+            if (!d) return;
+
+            // Section A
+            _setVal('consultationId', d.consultation_id);
+            _setVal('districtRegion', d.district_region);
+            _setSelectOther('mode', 'modeOther', d.mode, d.mode_other);
+            _setVal('consultationDate', d.consultation_date);
+            _setVal('surveyorName', d.surveyor_name);
+            _setCheckboxGroup('office_visited', d.office_visited,
+                'officeVisitedOtherCheck', 'officeVisitedOther', 'officeVisitedOtherWrapper');
+
+            // Section B
+            _setCheckboxGroup('body_type', d.body_type,
+                'bodyTypeOtherCheck', 'bodyTypeOther', 'bodyTypeOtherWrapper');
+            _setCheckboxGroup('jurisdiction', d.jurisdiction,
+                'jurisdictionOtherCheck', 'jurisdictionOther', 'jurisdictionOtherWrapper');
+            _setVal('respondentName', d.respondent_name);
+            _setVal('respondentMobile', d.respondent_mobile);
+            _setVal('respondentEmail', d.respondent_email);
+            _setVal('officeAddress', d.office_address);
+            _setVal('departmentWebsite', d.department_website);
+            _setVal('nodalOfficerName', d.nodal_officer_name);
+            _setVal('nodalOfficerMobile', d.nodal_officer_mobile);
+            _setVal('nodalOfficerEmail', d.nodal_officer_email);
+
+            // Section C/D/E.1 — tables
+            _fillInvestmentPipeline(d.investment_pipeline || []);
+            _fillSectoralAnalysis(d.sectoral_analysis || []);
+            _fillOccupationalCategories(d.occupational_categories || []);
+
+            // Section E
+            _setVal('upcomingSchemes', d.upcoming_schemes);
+            _setVal('emergingTechnologies', d.emerging_technologies);
+            _setRadio('aware_establishments', d.aware_establishments);
+            _setRadio('can_facilitate', d.can_facilitate);
+            _setVal('awareEstablishmentsCount', d.aware_establishments_count);
+            _setVal('concentrationSectors', d.concentration_sectors);
+            _setVal('knownEmployers', d.known_employers);
+            _setCheckboxGroup('facilitation_mode', d.facilitation_mode,
+                'facilitationModeOtherCheck', 'facilitationModeOther', 'facilitationModeOtherWrapper');
+
+            // Section F
+            _setCheckboxGroup('recruitment_challenges', d.recruitment_challenges,
+                'recruitmentOtherCheck', 'recruitmentOther', 'recruitmentOtherWrapper');
+            _setVal('difficultRoles', d.difficult_roles);
+            _setVal('emergingRoles', d.emerging_roles);
+            _setVal('changingCompetencies', d.changing_competencies);
+            _setVal('skillGaps', d.skill_gaps);
+            _setVal('highDemandDistricts', d.high_demand_districts);
+            _setVal('unfilledReasons', d.unfilled_reasons);
+            _setVal('operationalChallenges', d.operational_challenges);
+
+            // Section G
+            _setRadio('facilitate_surveys', d.facilitate_surveys);
+            _setRadio('share_registration_data', d.share_registration_data);
+            _setRadio('participate_coordination', d.participate_coordination);
+            _setRadio('share_demand_updates', d.share_demand_updates);
+            _setVal('deptNodalOfficerName', d.dept_nodal_officer_name);
+            _setVal('deptNodalOfficerMobile', d.dept_nodal_officer_mobile);
+            _setVal('deptNodalOfficerEmail', d.dept_nodal_officer_email);
+
+            // Section H
+            _setCheckboxGroup('supporting_evidence', d.supporting_evidence,
+                'evidenceOtherCheck', 'evidenceOther', 'evidenceOtherWrapper');
+            _setRadio('demand_evidence_status', d.demand_evidence_status);
+            _setVal('submissionDate', d.submission_date);
+            _setVal('place', d.place);
+            _setVal('authorizedSignature', d.authorized_signature);
+            _setVal('respondentSignature', d.respondent_signature);
+            if (d.official_stamp) {
+                const el = document.getElementById('officialStamp');
+                if (el) el.checked = true;
+            }
         }
 
         // ============================================================
@@ -1159,15 +1334,9 @@
 
             const submitBtn = document.getElementById('submitBtn');
             const spinner = document.getElementById('submitSpinner');
+            if (!submitBtn || !spinner) { logErr('Submit btn/spinner missing'); return; }
 
-            if (!submitBtn || !spinner) {
-                logErr('Submit button or spinner not found!');
-                return;
-            }
-
-            // ------------------------------------------------------------
             // Validation
-            // ------------------------------------------------------------
             const requiredFields = [
                 ['consultationId', 'Consultation ID'],
                 ['districtRegion', 'District / Region'],
@@ -1180,38 +1349,27 @@
             ];
             for (const [id, label] of requiredFields) {
                 const el = document.getElementById(id);
-                if (!el) { logErr(`Field #${id} not found`); continue; }
+                if (!el) continue;
                 if (!el.value.trim()) {
-                    logErr(`Required field empty: ${label}`);
                     showToast(`Please fill: ${label}`, 'error');
                     el.focus();
                     return;
                 }
             }
-
             if (getCheckedValues('office_visited').length === 0 &&
                 !document.getElementById('officeVisitedOtherCheck').checked) {
-                showToast('Please select at least one Department / Office Visited.', 'error');
-                return;
+                showToast('Please select at least one Department / Office Visited.', 'error'); return;
             }
             if (getCheckedValues('body_type').length === 0 &&
                 !document.getElementById('bodyTypeOtherCheck').checked) {
-                showToast('Please select Level / Type of Body.', 'error');
-                return;
+                showToast('Please select Level / Type of Body.', 'error'); return;
             }
             if (getCheckedValues('jurisdiction').length === 0 &&
                 !document.getElementById('jurisdictionOtherCheck').checked) {
-                showToast('Please select Jurisdiction / Area Covered.', 'error');
-                return;
+                showToast('Please select Jurisdiction / Area Covered.', 'error'); return;
             }
 
-            log('✅ Validation passed');
-
-            // ------------------------------------------------------------
-            // Build FormData
-            // ------------------------------------------------------------
             const formData = new FormData();
-
             formData.append('consultation_id', val('consultationId').trim());
             formData.append('district_region', val('districtRegion').trim());
             formData.append('mode', val('mode'));
@@ -1265,9 +1423,7 @@
                     specific_district: s5 ? s5.value.trim() : ''
                 };
                 if (row.sector_classification || row.dominant_sectors || row.emerging_sectors ||
-                    row.approx_investment || row.specific_district) {
-                    investmentPipeline.push(row);
-                }
+                    row.approx_investment || row.specific_district) investmentPipeline.push(row);
             });
             formData.append('investment_pipeline', JSON.stringify(investmentPipeline));
 
@@ -1282,9 +1438,7 @@
                     dominant_sectors: s2 ? s2.value.trim() : '',
                     emerging_sectors: s3 ? s3.value.trim() : ''
                 };
-                if (row.sector_classification || row.dominant_sectors || row.emerging_sectors) {
-                    sectoralAnalysis.push(row);
-                }
+                if (row.sector_classification || row.dominant_sectors || row.emerging_sectors) sectoralAnalysis.push(row);
             });
             formData.append('sectoral_analysis', JSON.stringify(sectoralAnalysis));
 
@@ -1311,7 +1465,6 @@
 
             formData.append('upcoming_schemes', val('upcomingSchemes').trim());
             formData.append('emerging_technologies', val('emergingTechnologies').trim());
-
             formData.append('aware_establishments', getRadioValue('aware_establishments'));
             formData.append('can_facilitate', getRadioValue('can_facilitate'));
             formData.append('aware_establishments_count', val('awareEstablishmentsCount'));
@@ -1359,96 +1512,58 @@
             formData.append('place', val('place').trim());
             formData.append('authorized_signature', val('authorizedSignature').trim());
             formData.append('respondent_signature', val('respondentSignature').trim());
-            
+
             const stampEl = document.getElementById('officialStamp');
             formData.append('official_stamp', stampEl && stampEl.checked ? 'true' : 'false');
 
             const fileInput = document.getElementById('supportingDocument');
             if (fileInput && fileInput.files.length) {
                 formData.append('supporting_document', fileInput.files[0]);
-                log('File attached:', fileInput.files[0].name);
             }
 
-            // Append CSRF
             const csrfToken = getCsrfToken();
-            if (!csrfToken) {
-                logErr('CSRF token missing!');
-                showToast('CSRF token missing. Please refresh the page.', 'error');
-                return;
-            }
-            log('CSRF token found:', csrfToken.substring(0, 10) + '...');
+            if (!csrfToken) { showToast('CSRF token missing. Please refresh.', 'error'); return; }
 
-            // Log what we are about to send
-            log('--- FormData contents ---');
-            for (let [k, v] of formData.entries()) {
-                if (v instanceof File) {
-                    log(`  ${k}: [File] ${v.name} (${v.size} bytes)`);
-                } else {
-                    const s = String(v);
-                    log(`  ${k}: ${s.length > 100 ? s.substring(0, 100) + '...' : s}`);
-                }
-            }
-            log('--- End FormData ---');
-
-            // ------------------------------------------------------------
-            // Send request
-            // ------------------------------------------------------------
-            const submitUrl = '/api/govt/submit/';
-            log('POST →', submitUrl);
+            // Edit mode me different URL
+            const submitUrl = window.EDIT_MODE
+                ? `/admin/govt-department/${window.EDIT_ID}/update/`
+                : '/api/govt/submit/';
 
             submitBtn.disabled = true;
             spinner.classList.remove('hidden');
-            setBtnText('Submitting...');
+            setBtnText(window.EDIT_MODE ? 'Updating...' : 'Submitting...');
 
             try {
                 const response = await fetch(submitUrl, {
                     method: 'POST',
                     body: formData,
-                    headers: {
-                        'X-CSRFToken': csrfToken
-                    },
+                    headers: { 'X-CSRFToken': csrfToken },
                     credentials: 'same-origin'
                 });
-
-                log('Response status:', response.status);
-                log('Response ok:', response.ok);
-                log('Response content-type:', response.headers.get('content-type'));
-
                 const rawText = await response.text();
-                log('Raw response (first 500 chars):', rawText.substring(0, 500));
-
                 let result;
-                try {
-                    result = JSON.parse(rawText);
-                } catch (pe) {
-                    logErr('Response is not JSON:', pe);
-                    logErr('Raw body:', rawText);
-                    showToast(`Server returned non-JSON (status ${response.status}). Check console.`, 'error');
+                try { result = JSON.parse(rawText); }
+                catch (pe) {
+                    logErr('Non-JSON:', rawText);
+                    showToast(`Server error (status ${response.status})`, 'error');
                     return;
                 }
 
-                log('Parsed response:', result);
-
                 if (result.status === 'success') {
-                    log('✅ SUCCESS — redirecting');
-                    showToast('Consultation submitted successfully!', 'success');
+                    showToast(window.EDIT_MODE ? 'Consultation updated successfully!' : 'Consultation submitted successfully!', 'success');
                     setTimeout(() => {
-                        window.location.href = '/govt/';
-                    }, 1500);
+                        window.location.href = window.EDIT_MODE ? '/admin/govt-departments/' : '/govt/';
+                    }, 1200);
                 } else {
-                    logErr('Server returned error:', result.message);
-                    showToast(result.message || 'Submission failed.', 'error');
+                    showToast(result.message || 'Operation failed.', 'error');
                 }
             } catch (error) {
                 logErr('Fetch error:', error);
-                logErr('Error name:', error.name);
-                logErr('Error message:', error.message);
                 showToast(`Network error: ${error.message}`, 'error');
             } finally {
-                // Safe reset — never crashes
                 submitBtn.disabled = false;
-                if (spinner) spinner.classList.add('hidden');
-                setBtnText('Submit Consultation');
+                spinner.classList.add('hidden');
+                setBtnText(window.EDIT_MODE ? 'Update Consultation' : 'Submit Consultation');
                 log('========== SUBMIT ENDED ==========');
             }
         }
@@ -1457,39 +1572,24 @@
         // RESET
         // ============================================================
         function resetForm() {
-            if (!confirm('Are you sure you want to reset the form? All data will be cleared.')) return;
-            log('Resetting form');
-
+            if (!confirm('Reset the form? All data will be cleared.')) return;
             const form = document.getElementById('govtForm');
             if (form) form.reset();
 
-            const ipb = document.getElementById('investmentPipelineBody');
-            const sab = document.getElementById('sectoralAnalysisBody');
-            const ocb = document.getElementById('occupationalCategoriesBody');
-            if (ipb) ipb.innerHTML = '';
-            if (sab) sab.innerHTML = '';
-            if (ocb) ocb.innerHTML = '';
-
-            const fi = document.getElementById('fileInfo');
-            const fd = document.getElementById('fileDropArea');
-            if (fi) fi.classList.add('hidden');
-            if (fd) fd.style.display = 'block';
-
+            ['investmentPipelineBody', 'sectoralAnalysisBody', 'occupationalCategoriesBody'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = '';
+            });
+            const fi = document.getElementById('fileInfo'); if (fi) fi.classList.add('hidden');
+            const fd = document.getElementById('fileDropArea'); if (fd) fd.style.display = 'block';
             document.querySelectorAll('.other-specify-wrapper').forEach(el => el.classList.remove('show'));
 
-            investmentRowCounter = 0;
-            sectoralRowCounter = 0;
-            occupationalRowCounter = 0;
-            addInvestmentPipelineRow();
-            addSectoralAnalysisRow();
-            addOccupationalCategoryRow();
+            investmentRowCounter = 0; sectoralRowCounter = 0; occupationalRowCounter = 0;
+            addInvestmentPipelineRow(); addSectoralAnalysisRow(); addOccupationalCategoryRow();
 
             const today = new Date().toISOString().split('T')[0];
-            const cd = document.getElementById('consultationDate');
-            const sd = document.getElementById('submissionDate');
-            if (cd) cd.value = today;
-            if (sd) sd.value = today;
-
+            const cd = document.getElementById('consultationDate'); if (cd) cd.value = today;
+            const sd = document.getElementById('submissionDate'); if (sd) sd.value = today;
             showToast('Form has been reset.', 'info');
         }
 

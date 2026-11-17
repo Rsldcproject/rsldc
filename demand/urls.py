@@ -30,8 +30,10 @@ urlpatterns = [
     # Association Admin Views
     path('admin/associations/', views.admin_association_list, name='admin_association_list'),
     path('admin/association/<int:consultation_id>/', views.get_association_detail, name='get_association_detail'),
+    path('admin/association/<int:consultation_id>/edit/', views.admin_association_edit, name='admin_association_edit'),
+    path('admin/association/<int:consultation_id>/update/', views.admin_association_update, name='admin_association_update'),
     path('admin/association/<int:consultation_id>/delete/', views.delete_association, name='delete_association'),
-    path('admin/export-association-csv/', views.admin_export_association_csv, name='admin_export_association_csv'),
+    path('admin/export/association-csv/', views.admin_export_association_csv, name='admin_export_association_csv'),
     
     # ============================================
     # DATA VIEWS
@@ -60,6 +62,8 @@ urlpatterns = [
     # Admin: Government Consultations
     path('admin/govt-departments/', views.admin_govt_list, name='admin_govt_list'),
     path('admin/govt-department/<int:consultation_id>/', views.get_govt_detail, name='get_govt_detail'),
+    path('admin/govt-department/<int:consultation_id>/edit/', views.admin_govt_edit, name='admin_govt_edit'),      # ✅ NEW
+    path('admin/govt-department/<int:consultation_id>/update/', views.admin_govt_update, name='admin_govt_update'),# ✅ NEW
     path('admin/govt-department/<int:consultation_id>/delete/', views.delete_govt, name='delete_govt'),
     path('admin/export-govt-csv/', views.admin_export_govt_csv, name='admin_export_govt_csv'),
 ]
